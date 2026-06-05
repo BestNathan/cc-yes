@@ -1,5 +1,5 @@
 ---
-name: cc-yes:install
+name: install
 description: Install the cc-yes binary (download pre-built or build from source)
 ---
 
