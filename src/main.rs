@@ -1,4 +1,5 @@
 mod config;
+mod matcher;
 mod parser;
 mod settings;
 
