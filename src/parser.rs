@@ -36,15 +36,22 @@ pub fn parse_bash(command: &str, cwd: &Path) -> ExtractedItems {
         } else if is_script(exec) {
             // bash script.sh, python script.py, node script.js
             items.cmd.push(exec.to_string());
-            let script_path = if tokens.len() > 1 { Some(tokens[1]) } else { None };
+            let script_path = if tokens.len() > 1 && !tokens[1].starts_with('-') {
+                Some(tokens[1])
+            } else {
+                None
+            };
             if let Some(sp) = script_path {
                 items.files.push(sp.to_string());
                 deep_parse_script(cwd, sp, &mut items);
             }
             // Check remaining tokens for files/urls
-            for t in &tokens[2..] {
+            let start = if script_path.is_some() { 2 } else { 1 };
+            for t in &tokens[start..] {
                 if is_url_like(t) {
                     items.url.push(t.to_string());
+                } else if looks_like_file(t) {
+                    items.files.push(t.to_string());
                 }
             }
         } else {
@@ -379,5 +386,19 @@ mod tests {
         let items = parse_bash("python train.py --epochs 100", Path::new("/tmp"));
         assert!(items.cmd.contains(&"python".to_string()));
         assert!(items.files.iter().any(|f| f.contains("train.py")));
+    }
+
+    #[test]
+    fn test_bash_c_flag_not_treated_as_script() {
+        let items = parse_bash("bash -c 'echo hello'", Path::new("/tmp"));
+        assert!(items.cmd.contains(&"bash".to_string()));
+        assert!(!items.files.contains(&"-c".to_string()), "-c flag should not be treated as a file");
+    }
+
+    #[test]
+    fn test_python_c_flag_not_treated_as_script() {
+        let items = parse_bash("python -c 'print(1)'", Path::new("/tmp"));
+        assert!(items.cmd.contains(&"python".to_string()));
+        assert!(!items.files.contains(&"-c".to_string()), "-c flag should not be treated as a file");
     }
 }
