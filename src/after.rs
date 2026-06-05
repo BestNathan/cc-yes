@@ -36,7 +36,7 @@ pub fn run_after() -> Result<(), String> {
         Some(id) => id,
         None => return Ok(()), // No session id → can't check snapshot
     };
-    let snapshot_path = std::path::PathBuf::from("/tmp")
+    let snapshot_path = std::env::temp_dir()
         .join(format!("cc-yes-{}.json", session_id));
 
     let snapshot: Vec<String> = match std::fs::read_to_string(&snapshot_path) {

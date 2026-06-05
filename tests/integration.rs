@@ -99,7 +99,7 @@ fn test_hook_delegate_unknown_command() {
     assert_eq!(decision["decision"], "delegate", "Expected delegate for 'rm -rf /'");
 
     // Verify snapshot was created
-    let snapshot_path = std::path::PathBuf::from("/tmp/cc-yes-test-session-2.json");
+    let snapshot_path = std::env::temp_dir().join("cc-yes-test-session-2.json");
     assert!(snapshot_path.exists(), "Snapshot file should exist after delegate");
 
     // Clean up

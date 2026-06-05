@@ -71,7 +71,7 @@ pub fn run_hook() -> Result<(), String> {
 /// Write current permissions.allow to a temp file for PostToolUse comparison.
 fn snapshot_permissions(local_path: &Path, session_id: &str) {
     let allow = settings::read_permissions_allow(local_path).unwrap_or_default();
-    let snapshot_path = std::path::PathBuf::from("/tmp")
+    let snapshot_path = std::env::temp_dir()
         .join(format!("cc-yes-{}.json", session_id));
     let json = serde_json::to_string(&allow).unwrap_or_default();
     let _ = std::fs::write(&snapshot_path, json);

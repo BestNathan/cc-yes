@@ -78,11 +78,10 @@ fn split_commands(command: &str) -> Vec<String> {
     let mut i = 0;
 
     while i < chars.len() {
-        if i + 1 < chars.len() && chars[i] == '&' && chars[i + 1] == '&' {
-            segments.push(current.trim().to_string());
-            current = String::new();
-            i += 2;
-        } else if i + 1 < chars.len() && chars[i] == '|' && chars[i + 1] == '|' {
+        if i + 1 < chars.len()
+            && (chars[i] == '&' || chars[i] == '|')
+            && chars[i] == chars[i + 1]
+        {
             segments.push(current.trim().to_string());
             current = String::new();
             i += 2;
@@ -108,10 +107,9 @@ fn split_commands(command: &str) -> Vec<String> {
 
 fn extract_env_from_line(line: &str, env_vars: &mut Vec<String>) {
     // Match "VAR=value" or "export VAR=value" patterns
-    for word in line.split_whitespace() {
-        let w = if word == "export" { continue } else { word };
-        if let Some(eq_pos) = w.find('=') {
-            let var_name = &w[..eq_pos];
+    for word in line.split_whitespace().filter(|w| *w != "export") {
+        if let Some(eq_pos) = word.find('=') {
+            let var_name = &word[..eq_pos];
             // Only match valid env var names (alphanumeric + underscore)
             if var_name.chars().all(|c| c.is_alphanumeric() || c == '_') && !var_name.is_empty() {
                 env_vars.push(var_name.to_string());
