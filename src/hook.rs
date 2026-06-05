@@ -60,7 +60,7 @@ pub fn run_hook() -> Result<(), String> {
 
     // Check all extracted items against rules
     if matcher::matches_all(&extracted, &config) {
-        log::log_decision(&cwd, &input.tool_name, &command_str, "allow", "all dimensions matched");
+        log::log_decision(&input.tool_name, &command_str, "allow", "all dimensions matched");
         let output = HookSpecificOutput {
             hook_event_name: "PreToolUse".to_string(),
             permission_decision: "allow".to_string(),
@@ -71,7 +71,7 @@ pub fn run_hook() -> Result<(), String> {
         });
         println!("{}", serde_json::to_string(&wrapper).unwrap());
     } else {
-        log::log_decision(&cwd, &input.tool_name, &command_str, "delegate", "some items not in allowlist");
+        log::log_decision(&input.tool_name, &command_str, "delegate", "some items not in allowlist");
         // Delegate — snapshot permissions.allow for auto-learn, then exit silently
         if let Some(session_id) = &input.session_id {
             snapshot_permissions(&local_path, session_id);

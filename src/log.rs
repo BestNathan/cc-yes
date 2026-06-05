@@ -1,16 +1,17 @@
 use std::io::Write;
-use std::path::Path;
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Log a hook decision to `.claude/cc-yes.log` in the project directory.
+/// Log a hook decision to `cc-yes.log` in the plugin directory.
 pub fn log_decision(
-    cwd: &Path,
     tool_name: &str,
     command: &str,
     decision: &str,
     reason: &str,
 ) {
-    let log_path = cwd.join(".claude").join("cc-yes.log");
+    let plugin_root = std::env::var("CLAUDE_PLUGIN_ROOT")
+        .unwrap_or_else(|_| ".".to_string());
+    let log_path = PathBuf::from(&plugin_root).join("cc-yes.log");
 
     if let Some(parent) = log_path.parent() {
         let _ = std::fs::create_dir_all(parent);
