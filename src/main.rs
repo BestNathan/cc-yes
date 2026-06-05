@@ -1,6 +1,7 @@
 mod after;
 mod config;
 mod hook;
+mod log;
 mod matcher;
 mod parser;
 mod settings;

@@ -1,6 +1,7 @@
 use std::io::{self, Read};
 use std::path::Path;
 use crate::config::{HookInput, HookSpecificOutput};
+use crate::log;
 use crate::parser;
 use crate::matcher;
 use crate::settings;
@@ -50,8 +51,16 @@ pub fn run_hook() -> Result<(), String> {
         return Ok(());
     }
 
+    let command_str = match input.tool_name.as_str() {
+        "Bash" => input.tool_input.get("command").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        "Write" | "Edit" | "NotebookEdit" => input.tool_input.get("file_path").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        "WebFetch" => input.tool_input.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        _ => format!("{:?}", input.tool_input),
+    };
+
     // Check all extracted items against rules
     if matcher::matches_all(&extracted, &config) {
+        log::log_decision(&cwd, &input.tool_name, &command_str, "allow", "all dimensions matched");
         let output = HookSpecificOutput {
             hook_event_name: "PreToolUse".to_string(),
             permission_decision: "allow".to_string(),
@@ -62,6 +71,7 @@ pub fn run_hook() -> Result<(), String> {
         });
         println!("{}", serde_json::to_string(&wrapper).unwrap());
     } else {
+        log::log_decision(&cwd, &input.tool_name, &command_str, "delegate", "some items not in allowlist");
         // Delegate — snapshot permissions.allow for auto-learn, then exit silently
         if let Some(session_id) = &input.session_id {
             snapshot_permissions(&local_path, session_id);
