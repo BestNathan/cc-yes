@@ -1,13 +1,13 @@
 use std::io::{self, Read};
 use std::path::Path;
-use crate::config::{HookInput, Decision};
+use crate::config::{HookInput, HookSpecificOutput};
 use crate::parser;
 use crate::matcher;
 use crate::settings;
 
 /// Run the PreToolUse hook logic.
-/// Reads HookInput from stdin, outputs Decision to stdout.
-/// On delegate, writes a snapshot of permissions.allow for later auto-learn detection.
+/// Reads HookInput from stdin, outputs hookSpecificOutput for approve,
+/// or exits silently (exit 0) to delegate to normal permission flow.
 pub fn run_hook() -> Result<(), String> {
     // Read stdin
     let mut input_json = String::new();
@@ -24,12 +24,12 @@ pub fn run_hook() -> Result<(), String> {
     };
 
     // Load merged yes config
-    let (config, local_path) = settings::load_merged(&cwd)?;
+    let Ok((config, local_path)) = settings::load_merged(&cwd) else {
+        return Ok(()); // Can't load config → silent exit, normal flow
+    };
 
-    // If no yes config at all, delegate
+    // If no yes config at all, exit silently
     if config.is_empty() {
-        let decision = Decision { decision: "delegate".to_string() };
-        println!("{}", serde_json::to_string(&decision).unwrap());
         return Ok(());
     }
 
@@ -45,24 +45,28 @@ pub fn run_hook() -> Result<(), String> {
         other => parser::parse_tool(other, &input.tool_input, &cwd),
     };
 
-    // If nothing extractable, delegate
+    // If nothing extractable, exit silently
     if extracted.is_empty() {
-        let decision = Decision { decision: "delegate".to_string() };
-        println!("{}", serde_json::to_string(&decision).unwrap());
         return Ok(());
     }
 
     // Check all extracted items against rules
     if matcher::matches_all(&extracted, &config) {
-        let decision = Decision { decision: "approve".to_string() };
-        println!("{}", serde_json::to_string(&decision).unwrap());
+        let output = HookSpecificOutput {
+            hook_event_name: "PreToolUse".to_string(),
+            permission_decision: "allow".to_string(),
+            permission_decision_reason: "All commands, files, URLs, imports, and env vars match yes rules".to_string(),
+        };
+        let wrapper = serde_json::json!({
+            "hookSpecificOutput": output,
+        });
+        println!("{}", serde_json::to_string(&wrapper).unwrap());
     } else {
-        // Delegate — but first snapshot permissions.allow for auto-learn detection
+        // Delegate — snapshot permissions.allow for auto-learn, then exit silently
         if let Some(session_id) = &input.session_id {
             snapshot_permissions(&local_path, session_id);
         }
-        let decision = Decision { decision: "delegate".to_string() };
-        println!("{}", serde_json::to_string(&decision).unwrap());
+        // exit 0 with no output = normal permission flow
     }
 
     Ok(())

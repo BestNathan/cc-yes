@@ -50,9 +50,12 @@ fn test_hook_approve_simple_git() {
 
     let output = child.wait_with_output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let decision: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    let result: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
 
-    assert_eq!(decision["decision"], "approve", "Expected approve for 'git status'");
+    assert_eq!(
+        result["hookSpecificOutput"]["permissionDecision"], "allow",
+        "Expected allow for 'git status'"
+    );
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
@@ -94,9 +97,13 @@ fn test_hook_delegate_unknown_command() {
 
     let output = child.wait_with_output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let decision: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
 
-    assert_eq!(decision["decision"], "delegate", "Expected delegate for 'rm -rf /'");
+    // Delegate: exit 0 with no decision output — normal permission flow applies
+    assert!(
+        stdout.trim().is_empty(),
+        "Expected silent exit (no output) for delegate, got: {}",
+        stdout.trim()
+    );
 
     // Verify snapshot was created
     let snapshot_path = std::env::temp_dir().join("cc-yes-test-session-2.json");

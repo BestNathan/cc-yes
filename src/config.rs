@@ -56,10 +56,16 @@ pub struct HookInput {
     pub cwd: Option<String>,
 }
 
-/// Decision output written to stdout.
+/// Output for PreToolUse hook approval.
+/// Wrapped in {"hookSpecificOutput": ...} before writing to stdout.
 #[derive(Debug, Serialize)]
-pub struct Decision {
-    pub decision: String, // "approve" or "delegate"
+pub struct HookSpecificOutput {
+    #[serde(rename = "hookEventName")]
+    pub hook_event_name: String,
+    #[serde(rename = "permissionDecision")]
+    pub permission_decision: String,
+    #[serde(rename = "permissionDecisionReason")]
+    pub permission_decision_reason: String,
 }
 
 /// Top-level wrapper for settings.json containing the optional `yes` block.
