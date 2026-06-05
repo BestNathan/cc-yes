@@ -9,7 +9,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "cc-yes", version = "0.1.0", about = "Auto-approve Claude Code tool-use permissions")]
+#[command(name = "cc-yes", version = "0.1.1", about = "Auto-approve Claude Code tool-use permissions")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
