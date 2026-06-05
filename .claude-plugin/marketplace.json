@@ -1,0 +1,18 @@
+{
+  "name": "cc-yes",
+  "description": "Auto-approve Claude Code tool-use permissions based on user-configured yes rules",
+  "owner": {
+    "name": "BestNathan"
+  },
+  "plugins": [
+    {
+      "name": "cc-yes",
+      "description": "Auto-approve Claude Code tool-use permissions based on user-configured yes rules across cmd, files, url, imports, and env dimensions",
+      "version": "0.1.0",
+      "source": "./",
+      "author": {
+        "name": "BestNathan"
+      }
+    }
+  ]
+}
