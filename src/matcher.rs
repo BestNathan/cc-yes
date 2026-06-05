@@ -67,7 +67,6 @@ fn match_item(item: &str, rules: &[String]) -> bool {
             // e.g. "cargo build" matches "cargo" but not "cargo check"
             item == rule
                 || item.starts_with(&format!("{} ", rule))
-                || rule.starts_with(&format!("{} ", item))
         } else {
             // Single-word rule → prefix match
             item == rule || item.starts_with(&format!("{} ", rule))
@@ -192,7 +191,7 @@ mod tests {
         };
 
         let extracted = ExtractedItems {
-            cmd: vec!["git".to_string(), "cargo".to_string()],
+            cmd: vec!["git".to_string(), "cargo build".to_string()],
             files: vec!["src/main.rs".to_string()],
             url: vec![],
             imports: vec![],
