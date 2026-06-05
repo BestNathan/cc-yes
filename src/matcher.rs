@@ -62,9 +62,8 @@ fn match_item(item: &str, rules: &[String]) -> bool {
             // Glob pattern matching
             glob_match(rule, item)
         } else if rule.contains(' ') {
-            // Multi-word rule → check if item starts with it (exact prefix),
-            // or if the rule starts with the item (bare command prefix).
-            // e.g. "cargo build" matches "cargo" but not "cargo check"
+            // Multi-word rule → check if item starts with the rule (exact prefix).
+            // e.g. "cargo build" matches "cargo build --release" but not "cargo check"
             item == rule
                 || item.starts_with(&format!("{} ", rule))
         } else {
