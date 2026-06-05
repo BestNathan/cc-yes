@@ -39,7 +39,7 @@ If the platform is not in this table, fall back to `--source`.
 
 ```bash
 # Default repo, override with CC_YES_REPO env var
-REPO="${CC_YES_REPO:-user/cc-yes}"
+REPO="${CC_YES_REPO:-BestNathan/cc-yes}"
 ARTIFACT="cc-yes-<platform-suffix>"
 URL="https://github.com/${REPO}/releases/latest/download/${ARTIFACT}"
 ```
