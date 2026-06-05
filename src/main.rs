@@ -1,4 +1,5 @@
 mod config;
+mod hook;
 mod matcher;
 mod parser;
 mod settings;
