@@ -1,0 +1,30 @@
+{
+  "description": "cc-yes: auto-approve based on yes rules",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [{
+          "type": "command",
+          "command": "${CLAUDE_PLUGIN_ROOT}/scripts/hook-entry.sh"
+        }]
+      },
+      {
+        "matcher": "Write|Edit|WebFetch|WebSearch|NotebookEdit",
+        "hooks": [{
+          "type": "command",
+          "command": "${CLAUDE_PLUGIN_ROOT}/scripts/hook-entry.sh"
+        }]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [{
+          "type": "command",
+          "command": "${CLAUDE_PLUGIN_ROOT}/scripts/hook-entry.sh after"
+        }]
+      }
+    ]
+  }
+}

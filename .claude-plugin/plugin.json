@@ -1,0 +1,10 @@
+{
+  "name": "cc-yes",
+  "description": "Auto-approve Claude Code tool-use based on user-configured yes rules across cmd, files, url, imports, and env dimensions",
+  "version": "0.1.0",
+  "author": {
+    "name": "cc-yes"
+  },
+  "homepage": "https://github.com/user/cc-yes",
+  "license": "MIT"
+}
