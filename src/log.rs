@@ -11,7 +11,7 @@ pub fn log_decision(
 ) {
     let plugin_root = std::env::var("CLAUDE_PLUGIN_ROOT")
         .unwrap_or_else(|_| ".".to_string());
-    let log_path = PathBuf::from(&plugin_root).join("cc-yes.log");
+    let log_path = PathBuf::from(&plugin_root).join("logs").join("cc-yes.log");
 
     if let Some(parent) = log_path.parent() {
         let _ = std::fs::create_dir_all(parent);
