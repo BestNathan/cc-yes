@@ -13,6 +13,8 @@ pub struct YesConfig {
     pub imports: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub env: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feishu: Option<FeishuConfig>,
 }
 
 impl YesConfig {
@@ -81,4 +83,33 @@ pub struct SettingsFile {
 pub struct PermissionsSection {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allow: Vec<String>,
+}
+
+/// Feishu bot configuration for remote approval.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FeishuConfig {
+    pub app_id: String,
+    pub app_secret: String,
+    pub chat_id: String,
+    #[serde(default = "default_timeout")]
+    pub timeout_secs: u64,
+}
+
+fn default_timeout() -> u64 {
+    30
+}
+
+impl FeishuConfig {
+    /// Returns true if all required fields are present.
+    pub fn is_configured(&self) -> bool {
+        !self.app_id.is_empty() && !self.app_secret.is_empty() && !self.chat_id.is_empty()
+    }
+}
+
+/// Result of a feishu approval request.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ApprovalResult {
+    Allow,
+    Deny,
+    Timeout,
 }
