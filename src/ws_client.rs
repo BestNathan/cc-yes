@@ -32,26 +32,24 @@ fn build_ping(svc: i32, seq: u64) -> Vec<u8> {
     b
 }
 
-/// Build a response frame (for acknowledging event messages).
-fn build_response(svc: i32, seq: u64, log_id: u64, msg_type: &str, msg_id: &str, code: i32) -> Vec<u8> {
+/// Build a response frame echoing ALL incoming headers (mirrors Go SDK: frame.Headers = hs).
+fn build_response(svc: i32, seq: u64, log_id: u64, headers: &HashMap<String, String>, code: i32) -> Vec<u8> {
     let payload = serde_json::json!({"code": code});
     let payload_str = serde_json::to_string(&payload).unwrap();
     let payload_bytes = payload_str.as_bytes();
 
     let mut b = Vec::new();
     encode_varint(&mut b, 0x08); encode_varint(&mut b, seq);             // SeqID
-    encode_varint(&mut b, 0x10); encode_varint(&mut b, log_id);          // LogID (from incoming frame)
-    encode_varint(&mut b, 0x18); encode_varint(&mut b, svc as u64);     // Service
-    encode_varint(&mut b, 0x20); encode_varint(&mut b, 1);              // Method(1=data)
+    encode_varint(&mut b, 0x10); encode_varint(&mut b, log_id);          // LogID
+    encode_varint(&mut b, 0x18); encode_varint(&mut b, svc as u64);      // Service
+    encode_varint(&mut b, 0x20); encode_varint(&mut b, 1);               // Method(1=data)
 
-    // Headers: each is a sub-message {key, value}, repeated
+    // Echo ALL headers from incoming frame (Go SDK: frame.Headers = hs)
     let mut h = Vec::new();
-    // Header 1: key="type", value=<msg_type>
-    pb_tag_len(&mut h, 1); encode_varint(&mut h, 4); h.extend_from_slice(b"type");
-    pb_tag_len(&mut h, 2); encode_varint(&mut h, msg_type.len() as u64); h.extend_from_slice(msg_type.as_bytes());
-    // Header 2: key="message_id", value=<msg_id>
-    pb_tag_len(&mut h, 1); encode_varint(&mut h, 10); h.extend_from_slice(b"message_id");
-    pb_tag_len(&mut h, 2); encode_varint(&mut h, msg_id.len() as u64); h.extend_from_slice(msg_id.as_bytes());
+    for (k, v) in headers {
+        pb_tag_len(&mut h, 1); encode_varint(&mut h, k.len() as u64); h.extend_from_slice(k.as_bytes());
+        pb_tag_len(&mut h, 2); encode_varint(&mut h, v.len() as u64); h.extend_from_slice(v.as_bytes());
+    }
     pb_tag_len(&mut b, 5); encode_varint(&mut b, h.len() as u64); b.extend_from_slice(&h);
 
     // Payload(8)
@@ -224,10 +222,10 @@ impl WsClient {
                             let mut complete = frame.clone();
                             complete.payload = combined;
 
-                            // Send response for event messages
+                            // Send response for event messages (echo all headers)
                             if complete.msg_type() == "event" {
                                 let resp = build_response(self.service_id, self.seq_id, complete.log_id,
-                                    "event", complete.msg_id(), 0);
+                                    &complete.headers, 0);
                                 self.seq_id += 1;
                                 self.write_bin(resp)?;
                             }
@@ -236,11 +234,10 @@ impl WsClient {
                         continue;
                     }
 
-                    // Single-part data frame
-                    // Per Go SDK: send response for event; card returns without response
+                    // Single-part data frame — respond with ALL incoming headers
                     if frame.msg_type() == "event" {
                         let resp = build_response(self.service_id, self.seq_id, frame.log_id,
-                            "event", frame.msg_id(), 0);
+                            &frame.headers, 0);
                         self.seq_id += 1;
                         self.write_bin(resp)?;
                     }
@@ -283,10 +280,17 @@ mod tests {
 
     #[test]
     fn test_response_roundtrip() {
-        let d = build_response(5, 2, 100, "event", "msg-1", 0);
+        let mut headers = HashMap::new();
+        headers.insert("type".into(), "event".into());
+        headers.insert("message_id".into(), "msg-1".into());
+        headers.insert("sum".into(), "1".into());
+        headers.insert("seq".into(), "0".into());
+        let d = build_response(5, 2, 100, &headers, 0);
         let f = decode_frame(&d).unwrap();
         assert_eq!(f.method, 1);
         assert_eq!(f.msg_type(), "event");
+        assert_eq!(f.h("message_id"), "msg-1");
+        assert_eq!(f.h("sum"), "1");
         let pl: serde_json::Value = serde_json::from_slice(&f.payload).unwrap();
         assert_eq!(pl["code"], 0);
     }
