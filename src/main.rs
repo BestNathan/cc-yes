@@ -1,5 +1,6 @@
 mod after;
 mod config;
+mod feishu;
 mod hook;
 mod log;
 mod matcher;
