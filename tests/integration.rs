@@ -137,3 +137,50 @@ fn test_check_command() {
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+#[test]
+fn test_hook_feishu_not_configured_still_delegates() {
+    let tmp = std::env::temp_dir().join("cc-yes-feishu-test");
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(tmp.join(".claude")).unwrap();
+
+    // Settings with feishu block but empty values → should skip feishu
+    let settings = r#"{"yes":{"cmd":["git"],"feishu":{"app_id":"","app_secret":"","chat_id":"","timeout_secs":5}}}"#;
+    std::fs::write(tmp.join(".claude").join("settings.local.json"), settings).unwrap();
+    std::env::set_var("HOME", tmp.to_str().unwrap());
+
+    let hook_input = serde_json::json!({
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": "rm -rf /",
+            "description": "Delete"
+        },
+        "session_id": "test-feishu-1",
+        "cwd": tmp.to_str().unwrap()
+    });
+
+    let mut child = Command::new(binary_path())
+        .arg("hook")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .current_dir(&tmp)
+        .spawn()
+        .unwrap();
+
+    {
+        let stdin = child.stdin.as_mut().unwrap();
+        stdin.write_all(hook_input.to_string().as_bytes()).unwrap();
+    }
+
+    let output = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // With empty feishu config, should fall through to delegate (silent exit)
+    assert!(
+        stdout.trim().is_empty(),
+        "Empty feishu config should not send feishu request, just delegate silently. Got: {}",
+        stdout.trim()
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
