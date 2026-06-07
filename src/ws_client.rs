@@ -1,5 +1,7 @@
-//! Feishu WebSocket client — proto2 binary frames with fragment reassembly.
-//! Card actions arrive as type=event with event_type=card.action.trigger.
+//! Feishu WebSocket client — mirrors Go SDK `handleMessage` logic exactly.
+//!
+//! Proto2 wire format. Each event data frame must be acknowledged with a response frame.
+//! Card actions arrive as `type=event` with `event_type=card.action.trigger`.
 
 use std::collections::HashMap;
 use std::net::TcpStream;
@@ -7,22 +9,54 @@ use std::time::{Duration, Instant};
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::Message;
 
-// ── Proto2 codec ──
+// ── Proto2 codec (mirrors pbbp2.proto + Go SDK Marshal/Unmarshal) ──
 
-fn e(buf: &mut Vec<u8>, mut v: u64) {
+fn encode_varint(buf: &mut Vec<u8>, mut v: u64) {
     loop { if v < 0x80 { buf.push(v as u8); break; } buf.push((v as u8 & 0x7f) | 0x80); v >>= 7; }
 }
-fn pb_v(buf: &mut Vec<u8>, f: u64, v: u64) { e(buf, (f << 3) | 0); e(buf, v); }
-fn pb_l(buf: &mut Vec<u8>, f: u64, d: &[u8]) {
-    if d.is_empty() { return; } e(buf, (f << 3) | 2); e(buf, d.len() as u64); buf.extend_from_slice(d);
+fn pb_tag_len(buf: &mut Vec<u8>, f: u64) { encode_varint(buf, (f << 3) | 2); }
+
+/// Proto2: ALL fields are written (required fields always serialized).
+fn build_ping(svc: i32, seq: u64) -> Vec<u8> {
+    let mut b = Vec::new();
+    // SeqID(1), LogID(2), Service(3), Method(4) — all required
+    encode_varint(&mut b, 0x08); encode_varint(&mut b, seq);           // field 1, varint
+    encode_varint(&mut b, 0x10); encode_varint(&mut b, 0);             // field 2, varint
+    encode_varint(&mut b, 0x18); encode_varint(&mut b, svc as u64);    // field 3, varint
+    encode_varint(&mut b, 0x20); encode_varint(&mut b, 0);             // field 4, varint (0=control)
+    // Headers(5): sub-message { type: "ping" }
+    let mut h = Vec::new();
+    pb_tag_len(&mut h, 1); encode_varint(&mut h, 4); h.extend_from_slice(b"type");  // key="type"
+    pb_tag_len(&mut h, 2); encode_varint(&mut h, 4); h.extend_from_slice(b"ping");  // value="ping"
+    pb_tag_len(&mut b, 5); encode_varint(&mut b, h.len() as u64); b.extend_from_slice(&h);
+    b
 }
-fn build_ping(svc: u64, seq: u64) -> Vec<u8> {
-    let mut b = Vec::new(); pb_v(&mut b, 1, seq); pb_v(&mut b, 2, 0); pb_v(&mut b, 3, svc); pb_v(&mut b, 4, 0);
-    let mut h = Vec::new(); pb_l(&mut h, 1, b"type"); pb_l(&mut h, 2, b"ping"); pb_l(&mut b, 5, &h); b
-}
-fn build_pong(svc: u64, seq: u64) -> Vec<u8> {
-    let mut b = Vec::new(); pb_v(&mut b, 1, seq); pb_v(&mut b, 2, 0); pb_v(&mut b, 3, svc); pb_v(&mut b, 4, 0);
-    let mut h = Vec::new(); pb_l(&mut h, 1, b"type"); pb_l(&mut h, 2, b"pong"); pb_l(&mut b, 5, &h); b
+
+/// Build a response frame (for acknowledging event messages).
+fn build_response(svc: i32, seq: u64, log_id: u64, msg_type: &str, msg_id: &str, code: i32) -> Vec<u8> {
+    let payload = serde_json::json!({"code": code});
+    let payload_str = serde_json::to_string(&payload).unwrap();
+    let payload_bytes = payload_str.as_bytes();
+
+    let mut b = Vec::new();
+    encode_varint(&mut b, 0x08); encode_varint(&mut b, seq);             // SeqID
+    encode_varint(&mut b, 0x10); encode_varint(&mut b, log_id);          // LogID (from incoming frame)
+    encode_varint(&mut b, 0x18); encode_varint(&mut b, svc as u64);     // Service
+    encode_varint(&mut b, 0x20); encode_varint(&mut b, 1);              // Method(1=data)
+
+    // Headers: each is a sub-message {key, value}, repeated
+    let mut h = Vec::new();
+    // Header 1: key="type", value=<msg_type>
+    pb_tag_len(&mut h, 1); encode_varint(&mut h, 4); h.extend_from_slice(b"type");
+    pb_tag_len(&mut h, 2); encode_varint(&mut h, msg_type.len() as u64); h.extend_from_slice(msg_type.as_bytes());
+    // Header 2: key="message_id", value=<msg_id>
+    pb_tag_len(&mut h, 1); encode_varint(&mut h, 10); h.extend_from_slice(b"message_id");
+    pb_tag_len(&mut h, 2); encode_varint(&mut h, msg_id.len() as u64); h.extend_from_slice(msg_id.as_bytes());
+    pb_tag_len(&mut b, 5); encode_varint(&mut b, h.len() as u64); b.extend_from_slice(&h);
+
+    // Payload(8)
+    pb_tag_len(&mut b, 8); encode_varint(&mut b, payload_bytes.len() as u64); b.extend_from_slice(payload_bytes);
+    b
 }
 
 // ── Frame ──
@@ -40,6 +74,8 @@ impl Frame {
     pub fn msg_id(&self) -> &str { self.h("message_id") }
 }
 
+// ── Protobuf varint decoder ──
+
 fn read_v(d: &[u8]) -> Option<(u64, usize)> {
     let mut v: u64 = 0; let mut s = 0;
     for (i, &b) in d.iter().enumerate() { v |= ((b & 0x7f) as u64) << s; if b < 0x80 { return Some((v,i+1)); } s+=7; if s>=64{return None;} } None
@@ -48,17 +84,26 @@ fn read_v(d: &[u8]) -> Option<(u64, usize)> {
 pub fn decode_frame(data: &[u8]) -> Option<Frame> {
     let mut f = Frame::default(); let mut p = 0;
     while p < data.len() {
-        let (tag,n) = read_v(&data[p..])?; p+=n; let field=tag>>3; let wire=tag&0x7;
+        let (tag,n) = read_v(&data[p..])?; p+=n;
+        let field=tag>>3; let wire=tag&0x7;
         match (field,wire){
             (1,0)=>{let(v,n)=read_v(&data[p..])?;f.seq_id=v;p+=n;}
             (2,0)=>{let(v,n)=read_v(&data[p..])?;f.log_id=v;p+=n;}
             (3,0)=>{let(v,n)=read_v(&data[p..])?;f.service=v as i32;p+=n;}
             (4,0)=>{let(v,n)=read_v(&data[p..])?;f.method=v as i32;p+=n;}
             (5,2)=>{let(hl,n)=read_v(&data[p..])?;p+=n;let end=p+hl as usize;
-                let mut ip=p;p=end;let(mut k,mut v)=(String::new(),String::new());
-                while ip<end{let(t,n)=read_v(&data[ip..])?;ip+=n;let(l,n)=read_v(&data[ip..])?;ip+=n;
-                    let s=String::from_utf8_lossy(&data[ip..ip+l as usize]).to_string();ip+=l as usize;
-                    match t>>3{1=>k=s,2=>v=s,_=>{}}}f.headers.insert(k,v);}
+                let mut ip=p;p=end;
+                while ip<end{
+                    // Read key (field 1)
+                    let(t1,n1)=read_v(&data[ip..])?;ip+=n1;
+                    let(l1,n1b)=read_v(&data[ip..])?;ip+=n1b;
+                    let k=String::from_utf8_lossy(&data[ip..ip+l1 as usize]).to_string();ip+=l1 as usize;
+                    // Read value (field 2)
+                    let(t2,n2)=read_v(&data[ip..])?;ip+=n2;
+                    let(l2,n2b)=read_v(&data[ip..])?;ip+=n2b;
+                    let v=String::from_utf8_lossy(&data[ip..ip+l2 as usize]).to_string();ip+=l2 as usize;
+                    f.headers.insert(k,v);
+                }}
             (8,2)=>{let(pl,n)=read_v(&data[p..])?;p+=n;f.payload=data[p..p+pl as usize].to_vec();p+=pl as usize;}
             _=>{if wire==0{let(_,n)=read_v(&data[p..])?;p+=n;}else if wire==2{let(l,n)=read_v(&data[p..])?;p+=n+l as usize;}}
         }
@@ -67,21 +112,18 @@ pub fn decode_frame(data: &[u8]) -> Option<Frame> {
 
 // ── Card action ──
 
-/// Parsed card action from a card.action.trigger event.
 #[derive(Debug, Clone)]
 pub struct CardAction {
-    pub action: String,      // "allow" or "deny"
+    pub action: String,
     pub request_id: String,
 }
 
-/// Extract card action from a frame payload.
-/// `event.action.value` is a JSON string that represents a JSON object.
-/// serde parses it directly: `json.loads(value_str)` → {action, request_id}.
+/// Parse card.action.trigger event payload.
+/// `event.action.value` is a JSON-encoded string of `{"action":"allow","request_id":"..."}`.
 pub fn parse_card_action(payload: &[u8]) -> Option<CardAction> {
     let ev: serde_json::Value = serde_json::from_slice(payload).ok()?;
     if ev["header"]["event_type"].as_str()? != "card.action.trigger" { return None; }
     let value_str = ev["event"]["action"]["value"].as_str()?;
-    // value_str is a JSON-encoded object like {"action":"allow","request_id":"ws-..."}
     let action: serde_json::Value = serde_json::from_str(value_str).ok()?;
     Some(CardAction {
         action: action["action"].as_str()?.to_string(),
@@ -89,13 +131,14 @@ pub fn parse_card_action(payload: &[u8]) -> Option<CardAction> {
     })
 }
 
-// ── WsClient ──
+// ── WsClient: mirrors Go SDK Client ──
 
 pub struct WsClient {
     ws: tungstenite::WebSocket<MaybeTlsStream<TcpStream>>,
     service_id: i32,
     seq_id: u64,
     last_ping: Instant,
+    ping_interval: Duration,
     fragments: HashMap<String, (i32, Vec<Vec<u8>>)>,
 }
 
@@ -109,22 +152,24 @@ impl WsClient {
             MaybeTlsStream::NativeTls(s) => { s.get_ref().set_read_timeout(Some(Duration::from_secs(1))).ok(); }
             _ => {}
         }
-        Ok(Self { ws, service_id, seq_id: 1, last_ping: Instant::now(), fragments: HashMap::new() })
+        Ok(Self {
+            ws, service_id, seq_id: 1, last_ping: Instant::now(),
+            ping_interval: Duration::from_secs(120), // default, updated by pong config
+            fragments: HashMap::new(),
+        })
     }
 
-    fn send_bin(&mut self, d: Vec<u8>) -> Result<(), String> {
+    fn write_bin(&mut self, d: Vec<u8>) -> Result<(), String> {
         self.ws.write(Message::Binary(d)).map_err(|e| format!("write: {}", e))
     }
 
     fn send_ping(&mut self) -> Result<(), String> {
-        let d = build_ping(self.service_id as u64, self.seq_id); self.seq_id += 1; self.last_ping = Instant::now(); self.send_bin(d)
+        let d = build_ping(self.service_id, self.seq_id); self.seq_id += 1;
+        self.last_ping = Instant::now(); self.write_bin(d)
     }
 
-    fn send_pong(&mut self) -> Result<(), String> {
-        let d = build_pong(self.service_id as u64, self.seq_id); self.seq_id += 1; self.send_bin(d)
-    }
-
-    /// Read next frame. Returns None on timeout. Handles WS ping/pong + fragment assembly.
+    /// Read and process one message. Returns Some(data_frame) on complete data frame, None on timeout.
+    /// Control frames are handled internally. Response frames are sent for event messages.
     pub fn read_message(&mut self) -> Result<Option<Frame>, String> {
         loop {
             let raw = match self.ws.read() {
@@ -133,26 +178,36 @@ impl WsClient {
                 Ok(Message::Close(_)) => return Err("closed".to_string()),
                 Err(tungstenite::Error::Io(ref e))
                     if e.kind() == std::io::ErrorKind::WouldBlock
-                    || e.kind() == std::io::ErrorKind::TimedOut => {
-                    if self.last_ping.elapsed() > Duration::from_secs(30) { self.send_ping()?; }
+                    || e.kind() == std::io::ErrorKind::TimedOut =>
+                {
+                    if self.last_ping.elapsed() > self.ping_interval { self.send_ping()?; }
                     return Ok(None);
                 }
                 Err(e) => return Err(format!("read: {}", e)),
                 _ => continue,
             };
 
-            let frame = decode_frame(&raw).ok_or("decode failed")?;
+            let frame = decode_frame(&raw).ok_or("proto decode failed")?;
 
             match frame.method {
                 0 => {
-                    // Control: handle ping/pong
-                    if frame.msg_type() == "ping" { self.send_pong()?; }
-                    if frame.msg_type() == "pong" { return Ok(Some(frame)); }
+                    // ── Control frame (mirrors Go handleControlFrame) ──
+                    let mt = frame.msg_type();
+                    if mt == "pong" && !frame.payload.is_empty() {
+                        // Parse ClientConfig from pong payload
+                        if let Ok(conf) = serde_json::from_slice::<serde_json::Value>(&frame.payload) {
+                            if let Some(pi) = conf["PingInterval"].as_i64() {
+                                self.ping_interval = Duration::from_secs(pi as u64);
+                            }
+                        }
+                    }
+                    // Note: Go SDK does NOT handle incoming "ping" control frames
                 }
                 1 => {
-                    // Data: handle fragmentation
+                    // ── Data frame (mirrors Go handleDataFrame) ──
                     let sum = frame.sum();
                     if sum > 1 {
+                        // Fragment reassembly (mirrors Go combine())
                         let mid = frame.msg_id().to_string();
                         let entry = self.fragments.entry(mid.clone())
                             .or_insert_with(|| (sum, vec![Vec::new(); sum as usize]));
@@ -162,24 +217,41 @@ impl WsClient {
                             self.fragments.remove(&mid);
                             let mut complete = frame.clone();
                             complete.payload = combined;
+
+                            // Send response for event messages
+                            if complete.msg_type() == "event" {
+                                let resp = build_response(self.service_id, self.seq_id, complete.log_id,
+                                    "event", complete.msg_id(), 0);
+                                self.seq_id += 1;
+                                self.write_bin(resp)?;
+                            }
                             return Ok(Some(complete));
                         }
                         continue;
                     }
+
+                    // Single-part data frame
+                    // Per Go SDK: send response for event; card returns without response
+                    if frame.msg_type() == "event" {
+                        let resp = build_response(self.service_id, self.seq_id, frame.log_id,
+                            "event", frame.msg_id(), 0);
+                        self.seq_id += 1;
+                        self.write_bin(resp)?;
+                    }
                     return Ok(Some(frame));
                 }
-                _ => continue,
+                _ => {} // Unknown method → ignore
             }
         }
     }
 
-    /// Listen until deadline, calling on_frame for each complete data frame.
-    pub fn listen(&mut self, deadline: Instant, mut on_frame: impl FnMut(Frame)) -> Result<(), String> {
+    /// Listen until deadline, calling on_frame for each event data frame.
+    pub fn listen(&mut self, deadline: Instant, mut on_event: impl FnMut(Frame)) -> Result<(), String> {
         while Instant::now() < deadline {
             match self.read_message()? {
-                Some(f) if f.method == 1 => on_frame(f),
-                Some(_) => {} // control frames handled in read_message
-                None => continue,
+                Some(f) if f.msg_type() == "event" => on_event(f),
+                Some(_) => {} // card or unknown → skip per Go SDK
+                None => continue, // timeout → keepalive handled in read_message
             }
         }
         Ok(())
@@ -195,16 +267,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_ping_roundtrip() {
-        let d = build_ping(42, 1);
+    fn test_ping_encode() {
+        let d = build_ping(33554678, 1);
         let f = decode_frame(&d).unwrap();
         assert_eq!(f.method, 0);
         assert_eq!(f.msg_type(), "ping");
+        assert_eq!(f.service, 33554678);
     }
 
     #[test]
-    fn test_parse_card_action_real() {
-        // Build the exact JSON structure using serde_json (correct escaping)
+    fn test_response_roundtrip() {
+        let d = build_response(5, 2, 100, "event", "msg-1", 0);
+        let f = decode_frame(&d).unwrap();
+        assert_eq!(f.method, 1);
+        assert_eq!(f.msg_type(), "event");
+        let pl: serde_json::Value = serde_json::from_slice(&f.payload).unwrap();
+        assert_eq!(pl["code"], 0);
+    }
+
+    #[test]
+    fn test_parse_card_action() {
+        // Build same structure as real event
         let inner = serde_json::json!({"action": "allow", "request_id": "ws-123"});
         let event = serde_json::json!({
             "schema": "2.0",
@@ -215,19 +298,5 @@ mod tests {
         let a = parse_card_action(payload.as_bytes()).unwrap();
         assert_eq!(a.action, "allow");
         assert_eq!(a.request_id, "ws-123");
-    }
-
-    #[test]
-    fn test_parse_card_deny_real() {
-        let inner = serde_json::json!({"action": "deny", "request_id": "xyz"});
-        let event = serde_json::json!({
-            "schema": "2.0",
-            "header": {"event_type": "card.action.trigger"},
-            "event": {"action": {"value": serde_json::to_string(&inner).unwrap(), "tag": "button"}}
-        });
-        let payload = serde_json::to_string(&event).unwrap();
-        let a = parse_card_action(payload.as_bytes()).unwrap();
-        assert_eq!(a.action, "deny");
-        assert_eq!(a.request_id, "xyz");
     }
 }
