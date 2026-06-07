@@ -119,12 +119,18 @@ pub struct CardAction {
 }
 
 /// Parse card.action.trigger event payload.
-/// `event.action.value` is a JSON-encoded string of `{"action":"allow","request_id":"..."}`.
+/// `event.action.value` is double-JSON-encoded:
+///   raw: `"{\\"action\\":\\"allow\\",\\"request_id\\":\\"...\\"}"`
+///   First parse → JSON string `{"action":"allow","request_id":"..."}`
+///   Second parse → JSON object {action: "allow", request_id: "..."}
 pub fn parse_card_action(payload: &[u8]) -> Option<CardAction> {
     let ev: serde_json::Value = serde_json::from_slice(payload).ok()?;
     if ev["header"]["event_type"].as_str()? != "card.action.trigger" { return None; }
     let value_str = ev["event"]["action"]["value"].as_str()?;
-    let action: serde_json::Value = serde_json::from_str(value_str).ok()?;
+    // value_str is a JSON-encoded string — parse as String first
+    let inner_json: String = serde_json::from_str(value_str).ok()?;
+    // inner_json is the actual action object
+    let action: serde_json::Value = serde_json::from_str(&inner_json).ok()?;
     Some(CardAction {
         action: action["action"].as_str()?.to_string(),
         request_id: action["request_id"].as_str()?.to_string(),
@@ -287,14 +293,29 @@ mod tests {
 
     #[test]
     fn test_parse_card_action() {
-        // Build same structure as real event
-        let inner = serde_json::json!({"action": "allow", "request_id": "ws-123"});
-        let event = serde_json::json!({
-            "schema": "2.0",
-            "header": {"event_type": "card.action.trigger"},
-            "event": {"action": {"value": serde_json::to_string(&inner).unwrap(), "tag": "button"}}
-        });
-        let payload = serde_json::to_string(&event).unwrap();
+        // Real WS protocol: action.value is double-encoded JSON string.
+        // serde parse of event → value = `"{\\"action\\":\\"allow\\",...}"` (starts with quote)
+        // from_str::<String> → `{"action":"allow",...}` (inner JSON text)
+        // from_str::<Value> → action object
+        let action_obj = serde_json::json!({"action": "allow", "request_id": "ws-123"});
+        let action_json = serde_json::to_string(&action_obj).unwrap(); // {"action":"allow","request_id":"ws-123"}
+        // After outer serde parse, value should be a JSON-encoded string of action_json
+        let value_after_serde = serde_json::to_string(&action_json).unwrap(); // "{\"action\":\"allow\",\"request_id\":\"ws-123\"}"
+
+        // Build event: use Value::String for value, then serialize event → parse back → pass to parse_card_action
+        let mut event_map = serde_json::Map::new();
+        event_map.insert("schema".into(), serde_json::json!("2.0"));
+        event_map.insert("header".into(), serde_json::json!({"event_type": "card.action.trigger"}));
+
+        let mut action_map = serde_json::Map::new();
+        // Store the already-JSON-encoded value string
+        action_map.insert("value".into(), serde_json::Value::String(value_after_serde));
+        action_map.insert("tag".into(), serde_json::json!("button"));
+        event_map.insert("event".into(), serde_json::json!({"action": serde_json::Value::Object(action_map)}));
+
+        let payload = serde_json::to_string(&event_map).unwrap();
+        // When serde parses this back, value becomes: "{\"action\":\"allow\",\"request_id\":\"ws-123\"}"
+        // which starts with " → from_str::<String> works
         let a = parse_card_action(payload.as_bytes()).unwrap();
         assert_eq!(a.action, "allow");
         assert_eq!(a.request_id, "ws-123");
