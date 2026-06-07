@@ -187,6 +187,7 @@ mod tests {
             url: vec![],
             imports: vec![],
             env: vec!["RUST_LOG".to_string()],
+            feishu: None,
         };
 
         let extracted = ExtractedItems {
@@ -208,6 +209,7 @@ mod tests {
             url: vec![],
             imports: vec![],
             env: vec![],
+            feishu: None,
         };
 
         let extracted = ExtractedItems {
@@ -229,6 +231,7 @@ mod tests {
             url: vec![],
             imports: vec![],
             env: vec![],
+            feishu: None,
         };
 
         let extracted = ExtractedItems::default();

@@ -50,6 +50,11 @@ fn merge_into(base: &mut YesConfig, other: &YesConfig) {
     base.url.extend(other.url.iter().cloned());
     base.imports.extend(other.imports.iter().cloned());
     base.env.extend(other.env.iter().cloned());
+    // feishu: higher-priority layer overrides
+    if other.feishu.is_some() {
+        base.feishu = other.feishu.clone();
+    }
+
     dedup(&mut base.cmd);
     dedup(&mut base.files);
     dedup(&mut base.url);
