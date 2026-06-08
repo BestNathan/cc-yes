@@ -1,39 +1,100 @@
 /// E2E: feishu WebSocket interactive approval
 /// Run: cargo test --test e2e -- --ignored --nocapture
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
-use cc_yes::ws_client;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+use cc_yes::ws::{
+    CardActionHandler, CardResponse, EventHandler, HandlerRegistry, WsClient, WsConfig,
+};
 
-#[test]
+#[tokio::test]
 #[ignore]
-fn test_feishu_interactive() {
-    let sp = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".claude").join("settings.local.json");
-    let sj: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&sp).unwrap()).unwrap();
+async fn test_feishu_interactive() {
+    let sp = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join(".claude")
+        .join("settings.local.json");
+    let sj: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&sp).unwrap()).unwrap();
     let fs = &sj["yes"]["feishu"];
-    let app_id = fs["app_id"].as_str().unwrap(); let app_secret = fs["app_secret"].as_str().unwrap();
-    let chat_id = fs["chat_id"].as_str().unwrap();
+    let app_id = fs["app_id"].as_str().unwrap().to_string();
+    let app_secret = fs["app_secret"].as_str().unwrap().to_string();
+    let chat_id = fs["chat_id"].as_str().unwrap().to_string();
 
-    // Token
-    let resp = ureq::post("https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal")
-        .set("Content-Type", "application/json; charset=utf-8")
-        .send_string(&serde_json::json!({"app_id":app_id,"app_secret":app_secret}).to_string()).unwrap();
-    let token = resp.into_json::<serde_json::Value>().unwrap()["tenant_access_token"].as_str().unwrap().to_string();
+    let request_id = format!(
+        "e2e-{}",
+        std::time::UNIX_EPOCH.elapsed().unwrap().as_secs()
+    );
+    let found = Arc::new(AtomicBool::new(false));
 
-    // WS URL
-    let resp = ureq::post("https://open.feishu.cn/callback/ws/endpoint")
-        .set("Content-Type", "application/json; charset=utf-8")
-        .send_string(&serde_json::json!({"AppID":app_id,"AppSecret":app_secret}).to_string()).unwrap();
-    let ws_url = resp.into_json::<serde_json::Value>().unwrap()["data"]["URL"].as_str().unwrap().to_string();
+    let registry = HandlerRegistry::new(64);
 
-    // Connect
-    println!("Connecting to: {}...", &ws_url[..ws_url.len().min(80)]);
-    let mut client = match ws_client::WsClient::connect(&ws_url) {
-        Ok(c) => { println!("Handshake OK!"); c }
-        Err(e) => { panic!("Connect failed: {}", e); }
+    // Register a minimal event handler (just logs)
+    registry
+        .register(EventHandler::new(|event| {
+            tracing::info!("event received: {:?}", event);
+            None
+        }))
+        .await;
+
+    // Register card handler that looks for our request_id
+    let found_clone = found.clone();
+    let expected_id = request_id.clone();
+    registry
+        .register(CardActionHandler::new(move |payload| {
+            let value_str = payload.get("value").and_then(|v| v.as_str());
+            if let Some(value_str) = value_str {
+                if let Ok(value) = serde_json::from_str::<serde_json::Value>(value_str) {
+                    if value.get("request_id").and_then(|r| r.as_str()) == Some(&expected_id) {
+                        let action = value
+                            .get("action")
+                            .and_then(|a| a.as_str())
+                            .unwrap_or("unknown");
+                        found_clone.store(true, Ordering::SeqCst);
+                        println!(
+                            "  >>> MATCH! action={} request_id={} <<<",
+                            action, expected_id
+                        );
+                    }
+                }
+            }
+            CardResponse::empty()
+        }))
+        .await;
+
+    // Start WsClient in background
+    let config = WsConfig {
+        app_id: app_id.clone(),
+        app_secret: app_secret.clone(),
+        domain: "https://open.feishu.cn".into(),
+        registry: registry.clone(),
     };
+    let client = WsClient::new(config);
+    let _ws_handle = tokio::spawn(async move {
+        match client.start().await {
+            Ok(()) => tracing::info!("WsClient exited cleanly"),
+            Err(e) => tracing::error!("WsClient error: {}", e),
+        }
+    });
 
-    // Send card
-    let request_id = format!("e2e-{}", std::time::UNIX_EPOCH.elapsed().unwrap().as_secs());
+    // Small delay to let the WsClient bootstrap and connect
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    // Get token via HTTP
+    let http = reqwest::Client::new();
+    let resp = http
+        .post("https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal")
+        .json(&serde_json::json!({"app_id": app_id, "app_secret": app_secret}))
+        .send()
+        .await
+        .unwrap();
+    let token = resp.json::<serde_json::Value>().await.unwrap()
+        ["tenant_access_token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Build and send card message
     let card = serde_json::json!({
         "config": {"update_multi": false},
         "header": {"title": {"tag": "plain_text", "content": "E2E 测试"}, "template": "blue"},
@@ -50,48 +111,32 @@ fn test_feishu_interactive() {
             ]}
         ]
     });
-    let body = serde_json::json!({"receive_id": chat_id, "msg_type": "interactive", "content": serde_json::to_string(&card).unwrap()});
-    let r: serde_json::Value = ureq::post("https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id")
-        .set("Authorization", &format!("Bearer {}", token))
-        .set("Content-Type", "application/json; charset=utf-8")
-        .send_string(&body.to_string()).unwrap().into_json().unwrap();
+    let body = serde_json::json!({
+        "receive_id": chat_id,
+        "msg_type": "interactive",
+        "content": serde_json::to_string(&card).unwrap()
+    });
+
+    let r: serde_json::Value = http
+        .post("https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id")
+        .header("Authorization", &format!("Bearer {}", token))
+        .json(&body)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
     assert_eq!(r["code"], 0);
     println!("Card sent! request_id={}", request_id);
     println!(">>> 请点击飞书按钮 (60s) <<<");
 
-    // Listen
-    let deadline = Instant::now() + Duration::from_secs(60);
-    let mut found = false;
-    let mut msg_count = 0;
-    client.listen(deadline, |frame| {
-        msg_count += 1;
-        let mt = frame.msg_type();
-        let payload_str = String::from_utf8_lossy(&frame.payload);
-        println!("\n[{}] type={} payload={}", msg_count, mt, &payload_str[..payload_str.len().min(500)]);
+    // Wait for card action (60s timeout)
+    tokio::time::sleep(Duration::from_secs(60)).await;
 
-        if mt == "card" || mt == "event" {
-            if let Ok(ev) = serde_json::from_slice::<serde_json::Value>(&frame.payload) {
-                // Check for card action
-                if let Some(action_val) = ev["action"]["value"].as_str() {
-                    if let Ok(action) = serde_json::from_str::<serde_json::Value>(action_val) {
-                        let rid = action["request_id"].as_str().unwrap_or("");
-                        let act = action["action"].as_str().unwrap_or("");
-                        println!("  >>> CARD ACTION: request_id={} action={} <<<", rid, act);
-                        if rid == request_id {
-                            println!("  >>> MATCH! {} <<<", act);
-                            found = true;
-                        }
-                    }
-                }
-                // Also check event type
-                let et = ev["header"]["event_type"].as_str().unwrap_or("");
-                if et.contains("card") {
-                    println!("  >>> CARD EVENT: {} <<<", et);
-                }
-            }
-        }
-    }).ok();
-    let _ = client.close();
-    println!("\nTotal: {} msgs, found={}", msg_count, found);
-    assert!(found, "No card action received for {}", request_id);
+    assert!(
+        found.load(Ordering::SeqCst),
+        "No card action received for {}",
+        request_id
+    );
 }
