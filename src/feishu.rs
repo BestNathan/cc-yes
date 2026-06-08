@@ -99,13 +99,16 @@ async fn request_approval_async(
         session_id: input.session_id.clone(),
     };
     let body = build_card(&card_info, &config.chat_id);
-    if send_msg(&token, &body).await.is_err() {
-        ws_handle.abort();
-        return ApprovalResult::Deny;
-    }
+    let sent_msg_id = match send_msg(&token, &body).await {
+        Ok(mid) => mid,
+        Err(_) => {
+            ws_handle.abort();
+            return ApprovalResult::Deny;
+        }
+    };
 
     // 4. Race: approval result vs timeout
-    let (outcome, msg_id) = tokio::select! {
+    let (outcome, action_msg_id) = tokio::select! {
         result = result_rx.recv() => {
             match result {
                 Some((action, msg_id)) => {
@@ -125,12 +128,15 @@ async fn request_approval_async(
 
     ws_handle.abort();
 
-    // 5. Update the card now (runtime still alive)
-    if let (ApprovalResult::Allow | ApprovalResult::Deny, Some(mid)) = (&outcome, &msg_id) {
-        let action = match outcome {
-            ApprovalResult::Allow => "allow",
-            _ => "deny",
-        };
+    // 5. Update the card (runtime still alive)
+    let update_action = match &outcome {
+        ApprovalResult::Allow => Some("allow"),
+        ApprovalResult::Deny => Some("deny"),
+        ApprovalResult::Timeout => Some("timeout"),
+    };
+    if let Some(action) = update_action {
+        // Use action_msg_id if available, otherwise fall back to sent_msg_id
+        let mid = action_msg_id.as_deref().unwrap_or(&sent_msg_id);
         let _ = update_card(&token, mid, action, &card_info).await;
     }
 
@@ -150,7 +156,7 @@ async fn get_token(app_id: &str, app_secret: &str) -> Result<String, String> {
     j["tenant_access_token"].as_str().map(|s| s.to_string()).ok_or("no token".to_string())
 }
 
-async fn send_msg(token: &str, body: &str) -> Result<(), String> {
+async fn send_msg(token: &str, body: &str) -> Result<String, String> {
     let client = reqwest::Client::new();
     let resp = client
         .post("https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id")
@@ -160,7 +166,7 @@ async fn send_msg(token: &str, body: &str) -> Result<(), String> {
         .send().await.map_err(|e| format!("send: {}", e))?;
     let j: serde_json::Value = resp.json().await.map_err(|e| format!("json: {}", e))?;
     if j["code"].as_i64().unwrap_or(-1) != 0 { return Err(format!("api: {}", j)); }
-    Ok(())
+    j["data"]["message_id"].as_str().map(|s| s.to_string()).ok_or("no message_id".to_string())
 }
 
 // ── Card info ──
@@ -234,7 +240,8 @@ async fn update_card(token: &str, message_id: &str, action: &str, info: &CardInf
 
     let (status_text, template) = match action {
         "allow" => ("✅ 已允许", "green"),
-        _ => ("❌ 已拒绝", "red"),
+        "deny" => ("❌ 已拒绝", "red"),
+        _ => ("⏰ 已超时", "grey"),
     };
 
     // Keep original info, remove buttons, show result
