@@ -10,8 +10,4 @@ if [ ! -x "$BIN" ]; then
   exit 0
 fi
 
-case "${1:-hook}" in
-  after)              exec "$BIN" after ;;
-  permission-request) exec "$BIN" permission-request ;;
-  *)                  exec "$BIN" hook ;;
-esac
+exec "$BIN" hook "${1:-pretooluse}"

@@ -6,14 +6,14 @@
         "matcher": "Bash",
         "hooks": [{
           "type": "command",
-          "command": "${CLAUDE_PLUGIN_ROOT}/scripts/hook-entry.sh"
+          "command": "${CLAUDE_PLUGIN_ROOT}/scripts/hook-entry.sh pretooluse"
         }]
       },
       {
         "matcher": "Write|Edit|WebFetch|WebSearch|NotebookEdit",
         "hooks": [{
           "type": "command",
-          "command": "${CLAUDE_PLUGIN_ROOT}/scripts/hook-entry.sh"
+          "command": "${CLAUDE_PLUGIN_ROOT}/scripts/hook-entry.sh pretooluse"
         }]
       }
     ],
@@ -31,7 +31,7 @@
         "matcher": "Bash",
         "hooks": [{
           "type": "command",
-          "command": "${CLAUDE_PLUGIN_ROOT}/scripts/hook-entry.sh after"
+          "command": "${CLAUDE_PLUGIN_ROOT}/scripts/hook-entry.sh posttooluse"
         }]
       }
     ]

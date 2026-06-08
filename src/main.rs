@@ -26,37 +26,40 @@ enum Commands {
     Install,
     /// Add a rule to settings.local.json
     Add {
-        /// Dimension: cmd, files, url, imports, env
         dimension: String,
-        /// Rule pattern to add (e.g., "git", "cargo build", "*.rs")
         rule: String,
     },
     /// Remove a rule from settings.local.json
     Remove {
-        /// Dimension: cmd, files, url, imports, env
         dimension: String,
-        /// Rule pattern to remove
         rule: String,
     },
     /// Show merged yes configuration
     List {
-        /// Optional: filter by dimension (cmd, files, url, imports, env)
         dimension: Option<String>,
     },
     /// Dry-run: check a command against current rules
     Check {
-        /// The bash command to check
         command: String,
     },
-    /// Internal: handle PreToolUse hook (reads stdin)
-    Hook,
-    /// Internal: handle PostToolUse auto-learn (reads stdin)
-    After,
     /// Start WebSocket daemon for long-running event/card handling
     Daemon,
-    /// Internal: handle PermissionRequest hook (feishu approval, reads stdin)
+    /// Hook handlers (called by Claude Code, read stdin)
+    #[command(subcommand)]
+    Hook(HookCommand),
+}
+
+#[derive(Subcommand)]
+enum HookCommand {
+    /// PreToolUse: check rules → approve or delegate
+    #[command(name = "pretooluse")]
+    PreToolUse,
+    /// PermissionRequest: send feishu card → wait for approval
     #[command(name = "permission-request")]
     PermissionRequest,
+    /// PostToolUse: auto-learn from "Always allow" clicks
+    #[command(name = "posttooluse")]
+    PostToolUse,
 }
 
 fn main() -> Result<(), String> {
@@ -157,17 +160,11 @@ fn main() -> Result<(), String> {
             }
         }
 
-        Commands::Hook => {
-            hook::run_hook()?;
-        }
-
-        Commands::PermissionRequest => {
-            permission_request::run_permission_request()?;
-        }
-
-        Commands::After => {
-            after::run_after()?;
-        }
+        Commands::Hook(cmd) => match cmd {
+            HookCommand::PreToolUse => hook::run_hook()?,
+            HookCommand::PermissionRequest => permission_request::run_permission_request()?,
+            HookCommand::PostToolUse => after::run_after()?,
+        },
 
         Commands::Daemon => {
             tracing_subscriber::fmt::init();
