@@ -1,13 +1,18 @@
+//! Event handler for WebSocket `type=event` messages.
+
 use async_trait::async_trait;
-use serde_json::Value;
 use crate::ws::proto::headers::MessageType;
 use crate::ws::business::handler::MessageHandler;
+use crate::ws::business::event_types::Event;
 use crate::ws::business::types::IncomingMessage;
 
-type EventCallback = Box<dyn Fn(Value) -> Option<Vec<u8>> + Send + Sync + 'static>;
+type EventCallback = Box<dyn Fn(Event) -> Option<Vec<u8>> + Send + Sync + 'static>;
 
-/// Built-in handler for MessageType::Event.
-/// Parses the JSON payload and passes it to a user-provided callback.
+/// Built-in handler for `MessageType::Event`.
+///
+/// Parses the JSON payload into a typed [`Event`] and passes it to the
+/// user-provided callback.  Use `Event::is_type()` / `Event::card_action()`
+/// to inspect specific event variants.
 pub struct EventHandler {
     callback: EventCallback,
 }
@@ -15,7 +20,7 @@ pub struct EventHandler {
 impl EventHandler {
     pub fn new<F>(callback: F) -> Self
     where
-        F: Fn(Value) -> Option<Vec<u8>> + Send + Sync + 'static,
+        F: Fn(Event) -> Option<Vec<u8>> + Send + Sync + 'static,
     {
         Self { callback: Box::new(callback) }
     }
@@ -28,7 +33,7 @@ impl MessageHandler for EventHandler {
     }
 
     async fn handle(&self, msg: IncomingMessage) {
-        let event: Value = match serde_json::from_slice(&msg.payload) {
+        let event: Event = match serde_json::from_slice(&msg.payload) {
             Ok(v) => v,
             Err(e) => {
                 tracing::warn!("failed to parse event JSON: {}", e);
