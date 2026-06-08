@@ -6,6 +6,7 @@ mod log;
 mod matcher;
 mod parser;
 mod settings;
+mod ws;
 mod ws_client;
 
 use clap::{Parser, Subcommand};
