@@ -27,7 +27,7 @@ async fn test_feishu_interactive() {
     );
     let found = Arc::new(AtomicBool::new(false));
 
-    let registry = HandlerRegistry::new(64);
+    let registry = Arc::new(HandlerRegistry::new(64));
 
     // Register a minimal event handler (just logs)
     registry
@@ -67,7 +67,7 @@ async fn test_feishu_interactive() {
         app_id: app_id.clone(),
         app_secret: app_secret.clone(),
         domain: "https://open.feishu.cn".into(),
-        registry: registry.clone(),
+        registry: Arc::clone(&registry),
     };
     let client = WsClient::new(config);
     let _ws_handle = tokio::spawn(async move {
