@@ -1,6 +1,6 @@
 //! Feishu interactive approval — async implementation using WsClient + EventHandler.
 //!
-//! Flow: get token -> send card -> start WS with EventHandler -> wait for approval.
+//! Flow: get token -> start WS -> send card -> wait for approval.
 //!
 //! The outer `request_approval` is SYNC (preserving backward compatibility with hook.rs).
 //! It creates a tokio runtime internally and calls the async inner function via block_on.
@@ -37,13 +37,7 @@ async fn request_approval_async(
         Err(_) => return ApprovalResult::Deny,
     };
 
-    // 2. Send interactive card
-    let body = build_card(&request_id, &config.chat_id, &input.tool_name, command);
-    if send_msg(&token, &body).await.is_err() {
-        return ApprovalResult::Deny;
-    }
-
-    // 3. Set up EventHandler — parse card.action.trigger via typed Event model
+    // 2. Set up handler + start WS first (so we're listening before the card arrives)
     let rid = request_id.clone();
     let (result_tx, mut result_rx) = tokio::sync::mpsc::channel(1);
 
@@ -65,7 +59,6 @@ async fn request_approval_async(
         }))
         .await;
 
-    // 4. Spawn WS client in background
     let ws_client = WsClient::new(WsConfig {
         app_id: config.app_id.clone(),
         app_secret: config.app_secret.clone(),
@@ -79,7 +72,17 @@ async fn request_approval_async(
         }
     });
 
-    // 5. Race: approval result vs timeout
+    // Give WS a moment to connect before sending the card
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // 3. Send interactive card (WS is already listening)
+    let body = build_card(&request_id, &config.chat_id, &input.tool_name, command);
+    if send_msg(&token, &body).await.is_err() {
+        ws_handle.abort();
+        return ApprovalResult::Deny;
+    }
+
+    // 4. Race: approval result vs timeout
     let outcome = tokio::select! {
         result = result_rx.recv() => {
             match result.as_deref() {
