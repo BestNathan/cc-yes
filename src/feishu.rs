@@ -32,9 +32,9 @@ async fn request_approval_async(
 
     // 2. Set up handler + start WS (so we're listening before the card arrives)
     let rid = request_id.clone();
-    let (result_tx, mut result_rx) = tokio::sync::mpsc::channel(1);
+    // Channel carries (action, open_message_id) so we can update the card later
+    let (result_tx, mut result_rx) = tokio::sync::mpsc::channel::<(String, Option<String>)>(1);
 
-    let token_for_handler = token.clone();
     let registry = Arc::new(HandlerRegistry::new(64));
     registry
         .register(EventHandler::new(move |event: Event| {
@@ -42,18 +42,9 @@ async fn request_approval_async(
                 if let Some(av) = card.action.parse_value::<ActionValue>() {
                     if av.request_id == rid {
                         let action = av.action.clone();
-                        let _ = result_tx.try_send(action.clone());
-                        let action_for_update = action.clone();
-
-                        // Update card asynchronously
-                        let token = token_for_handler.clone();
                         let msg_id = card.context.as_ref()
                             .and_then(|c| c.open_message_id.clone());
-                        tokio::spawn(async move {
-                            if let Some(mid) = msg_id {
-                                let _ = update_card(&token, &mid, &action_for_update).await;
-                            }
-                        });
+                        let _ = result_tx.try_send((action.clone(), msg_id));
 
                         // Return toast in WS response
                         let toast = match action.as_str() {
@@ -92,19 +83,35 @@ async fn request_approval_async(
     }
 
     // 4. Race: approval result vs timeout
-    let outcome = tokio::select! {
+    let (outcome, msg_id) = tokio::select! {
         result = result_rx.recv() => {
-            match result.as_deref() {
-                Some("allow") => ApprovalResult::Allow,
-                _ => ApprovalResult::Deny,
+            match result {
+                Some((action, msg_id)) => {
+                    let outcome = match action.as_str() {
+                        "allow" => ApprovalResult::Allow,
+                        _ => ApprovalResult::Deny,
+                    };
+                    (outcome, msg_id)
+                }
+                None => (ApprovalResult::Deny, None),
             }
         }
         _ = tokio::time::sleep(timeout) => {
-            ApprovalResult::Timeout
+            (ApprovalResult::Timeout, None)
         }
     };
 
     ws_handle.abort();
+
+    // 5. Update the card now (runtime still alive)
+    if let (ApprovalResult::Allow | ApprovalResult::Deny, Some(mid)) = (&outcome, &msg_id) {
+        let action = match outcome {
+            ApprovalResult::Allow => "allow",
+            _ => "deny",
+        };
+        let _ = update_card(&token, mid, action).await;
+    }
+
     outcome
 }
 
