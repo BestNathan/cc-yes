@@ -211,8 +211,21 @@ impl WsClient {
     }
 }
 
-/// Build a response Frame echoing the original frame's fields but with new payload.
+/// Build a response Frame echoing the original frame's fields, with the
+/// handler response base64-encoded in `{"code":200,"data":"<base64>"}` format
+/// per the Feishu WS protocol §3.8.
 fn build_response_frame(original: &Frame, response_data: &[u8]) -> Frame {
+    use base64::Engine;
+
+    let code: i32 = if response_data == b"{\"code\":200}" { 200 } else { 200 };
+
+    let payload = if response_data.is_empty() || response_data == b"{\"code\":200}" {
+        serde_json::json!({"code": code})
+    } else {
+        let encoded = base64::engine::general_purpose::STANDARD.encode(response_data);
+        serde_json::json!({"code": code, "data": encoded})
+    };
+
     let mut headers = original.headers.clone();
     headers.push(crate::ws::proto::frame::Header {
         key: headers::HEADER_BIZ_RT.into(),
@@ -227,7 +240,7 @@ fn build_response_frame(original: &Frame, response_data: &[u8]) -> Frame {
         headers,
         payload_encoding: Some("json".into()),
         payload_type: None,
-        payload: Some(response_data.to_vec()),
+        payload: Some(serde_json::to_vec(&payload).unwrap_or_default()),
         log_id_new: None,
     }
 }
