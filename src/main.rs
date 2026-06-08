@@ -11,6 +11,7 @@ mod ws_client;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 #[derive(Parser)]
 #[command(name = "cc-yes", version = "0.1.1", about = "Auto-approve Claude Code tool-use permissions")]
@@ -51,6 +52,8 @@ enum Commands {
     Hook,
     /// Internal: handle PostToolUse auto-learn (reads stdin)
     After,
+    /// Start WebSocket daemon for long-running event/card handling
+    Daemon,
 }
 
 fn main() -> Result<(), String> {
@@ -157,6 +160,34 @@ fn main() -> Result<(), String> {
 
         Commands::After => {
             after::run_after()?;
+        }
+
+        Commands::Daemon => {
+            tracing_subscriber::fmt::init();
+            let rt = tokio::runtime::Runtime::new()
+                .map_err(|e| format!("tokio runtime: {}", e))?;
+            rt.block_on(async {
+                let registry = std::sync::Arc::new(
+                    crate::ws::HandlerRegistry::new(64)
+                );
+                // Register built-in handlers
+                registry.register(crate::ws::EventHandler::new(|event| {
+                    tracing::info!("event received: {:?}", event);
+                    None
+                })).await;
+
+                let config = crate::ws::WsConfig {
+                    app_id: std::env::var("FEISHU_APP_ID")
+                        .map_err(|_| "FEISHU_APP_ID not set".to_string())?,
+                    app_secret: std::env::var("FEISHU_APP_SECRET")
+                        .map_err(|_| "FEISHU_APP_SECRET not set".to_string())?,
+                    domain: "https://open.feishu.cn".into(),
+                    registry,
+                };
+
+                let client = crate::ws::WsClient::new(config);
+                client.start().await.map_err(|e| format!("ws error: {}", e))
+            })?;
         }
     }
 
