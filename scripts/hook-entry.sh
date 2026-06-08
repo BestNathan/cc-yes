@@ -11,6 +11,7 @@ if [ ! -x "$BIN" ]; then
 fi
 
 case "${1:-hook}" in
-  after) exec "$BIN" after ;;
-  *)     exec "$BIN" hook ;;
+  after)              exec "$BIN" after ;;
+  permission-request) exec "$BIN" permission-request ;;
+  *)                  exec "$BIN" hook ;;
 esac

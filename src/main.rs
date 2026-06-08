@@ -5,6 +5,7 @@ mod hook;
 mod log;
 mod matcher;
 mod parser;
+mod permission_request;
 mod settings;
 mod ws;
 
@@ -53,6 +54,9 @@ enum Commands {
     After,
     /// Start WebSocket daemon for long-running event/card handling
     Daemon,
+    /// Internal: handle PermissionRequest hook (feishu approval, reads stdin)
+    #[command(name = "permission-request")]
+    PermissionRequest,
 }
 
 fn main() -> Result<(), String> {
@@ -155,6 +159,10 @@ fn main() -> Result<(), String> {
 
         Commands::Hook => {
             hook::run_hook()?;
+        }
+
+        Commands::PermissionRequest => {
+            permission_request::run_permission_request()?;
         }
 
         Commands::After => {

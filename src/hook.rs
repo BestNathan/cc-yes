@@ -1,7 +1,6 @@
 use std::io::{self, Read};
 use std::path::Path;
-use crate::config::{HookInput, HookSpecificOutput, ApprovalResult};
-use crate::feishu;
+use crate::config::{HookInput, HookSpecificOutput};
 use crate::log;
 use crate::parser;
 use crate::matcher;
@@ -72,63 +71,8 @@ pub fn run_hook() -> Result<(), String> {
         });
         println!("{}", serde_json::to_string(&wrapper).unwrap());
     } else {
-        // Try feishu approval first (if configured)
-        let feishu_result = if let Some(ref feishu_config) = config.feishu {
-            Some(feishu::request_approval(feishu_config, &input, &command_str))
-        } else {
-            None
-        };
-
-        match feishu_result {
-            Some(ApprovalResult::Allow) => {
-                // Remote allowed — output approve
-                log::log_decision(&input.tool_name, &command_str, "allow", "approved via feishu");
-                let output = HookSpecificOutput {
-                    hook_event_name: "PreToolUse".to_string(),
-                    permission_decision: "allow".to_string(),
-                    permission_decision_reason: "Approved via feishu".to_string(),
-                };
-                let wrapper = serde_json::json!({
-                    "hookSpecificOutput": output,
-                });
-                println!("{}", serde_json::to_string(&wrapper).unwrap());
-
-                // Auto-learn from feishu approval
-                if !extracted.is_empty() {
-                    let mut to_learn = crate::config::YesConfig::default();
-                    for cmd in &extracted.cmd {
-                        if !matcher::match_single(cmd, &config.cmd) {
-                            to_learn.cmd.push(cmd.clone());
-                        }
-                    }
-                    for file in &extracted.files {
-                        if !matcher::match_single(file, &config.files) {
-                            to_learn.files.push(file.clone());
-                        }
-                    }
-                    for url in &extracted.url {
-                        if !matcher::match_single(url, &config.url) {
-                            to_learn.url.push(url.clone());
-                        }
-                    }
-                    if !to_learn.is_empty() {
-                        let _ = settings::write_to_local(&local_path, &to_learn);
-                    }
-                }
-                return Ok(());
-            }
-            Some(ApprovalResult::Deny) => {
-                log::log_decision(&input.tool_name, &command_str, "delegate", "denied via feishu");
-            }
-            Some(ApprovalResult::Timeout) => {
-                log::log_decision(&input.tool_name, &command_str, "delegate", "feishu timeout");
-            }
-            None => {
-                log::log_decision(&input.tool_name, &command_str, "delegate", "some items not in allowlist");
-            }
-        }
-
-        // Delegate — snapshot permissions.allow for auto-learn, then exit silently
+        // Delegate — not in yes rules, let Claude show permission prompt
+        log::log_decision(&input.tool_name, &command_str, "delegate", "some items not in allowlist");
         if let Some(session_id) = &input.session_id {
             snapshot_permissions(&local_path, session_id);
         }

@@ -17,6 +17,15 @@
         }]
       }
     ],
+    "PermissionRequest": [
+      {
+        "matcher": "*",
+        "hooks": [{
+          "type": "command",
+          "command": "${CLAUDE_PLUGIN_ROOT}/scripts/hook-entry.sh permission-request"
+        }]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Bash",
