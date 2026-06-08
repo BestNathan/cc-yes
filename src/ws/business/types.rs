@@ -1,6 +1,7 @@
 use tokio::sync::oneshot;
 
 /// Message sent from protocol layer to a handler task.
+#[derive(Debug)]
 pub struct IncomingMessage {
     /// JSON payload bytes
     pub payload: Vec<u8>,
