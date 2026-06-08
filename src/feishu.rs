@@ -76,7 +76,14 @@ async fn request_approval_async(
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     // 3. Send interactive card
-    let body = build_card(&request_id, &config.chat_id, &input.tool_name, command);
+    let card_info = CardInfo {
+        request_id: request_id.clone(),
+        tool: input.tool_name.clone(),
+        cmd: command.to_string(),
+        session_id: input.session_id.clone(),
+        cwd: input.cwd.clone(),
+    };
+    let body = build_card(&card_info, &config.chat_id);
     if send_msg(&token, &body).await.is_err() {
         ws_handle.abort();
         return ApprovalResult::Deny;
@@ -109,49 +116,10 @@ async fn request_approval_async(
             ApprovalResult::Allow => "allow",
             _ => "deny",
         };
-        let _ = update_card(&token, mid, action).await;
+        let _ = update_card(&token, mid, action, &card_info).await;
     }
 
     outcome
-}
-
-// ── Card update ──
-
-/// Update the interactive card to show the final state and remove buttons.
-/// Uses PATCH /open-apis/im/v1/messages/:message_id
-async fn update_card(token: &str, message_id: &str, action: &str) -> Result<(), String> {
-    let (status_text, template) = match action {
-        "allow" => ("✅ 已允许", "green"),
-        _ => ("❌ 已拒绝", "red"),
-    };
-
-    let card = serde_json::json!({
-        "config": {"update_multi": false},
-        "header": {
-            "title": {"tag": "plain_text", "content": "Claude Code 请求确认"},
-            "template": template
-        },
-        "elements": [
-            {"tag": "div", "text": {"tag": "lark_md", "content": status_text}}
-        ]
-    });
-
-    let client = reqwest::Client::new();
-    let resp = client
-        .patch(&format!(
-            "https://open.feishu.cn/open-apis/im/v1/messages/{}",
-            message_id
-        ))
-        .header("Authorization", &format!("Bearer {}", token))
-        .header("Content-Type", "application/json; charset=utf-8")
-        .json(&serde_json::json!({"content": serde_json::to_string(&card).unwrap()}))
-        .send().await.map_err(|e| format!("update card: {}", e))?;
-
-    let j: serde_json::Value = resp.json().await.map_err(|e| format!("json: {}", e))?;
-    if j["code"].as_i64().unwrap_or(-1) != 0 {
-        return Err(format!("update card api: {}", j));
-    }
-    Ok(())
 }
 
 // ── HTTP helpers ──
@@ -180,22 +148,48 @@ async fn send_msg(token: &str, body: &str) -> Result<(), String> {
     Ok(())
 }
 
+// ── Card info ──
+
+struct CardInfo {
+    request_id: String,
+    tool: String,
+    cmd: String,
+    session_id: Option<String>,
+    cwd: Option<String>,
+}
+
 // ── Card builder ──
 
-fn build_card(rid: &str, chat_id: &str, tool: &str, cmd: &str) -> String {
+fn build_card(info: &CardInfo, chat_id: &str) -> String {
+    let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let sid = info.session_id.as_deref().unwrap_or("-");
+    let cwd = info.cwd.as_deref().unwrap_or("-");
+
     let card = serde_json::json!({
-        "config": {"update_multi": false},
-        "header": {"title": {"tag": "plain_text", "content": "Claude Code 请求确认"}, "template": "blue"},
+        "config": {"update_multi": true},
+        "header": {
+            "title": {"tag": "plain_text", "content": "Claude Code 请求确认"},
+            "template": "blue"
+        },
         "elements": [
+            {"tag": "hr"},
             {"tag": "div", "fields": [
-                {"is_short": true, "text": {"tag": "lark_md", "content": format!("**工具**\n{}", tool)}},
-                {"is_short": true, "text": {"tag": "lark_md", "content": format!("**命令**\n{}", cmd)}}
+                {"is_short": true, "text": {"tag": "lark_md", "content": format!("**工具**\n{}", info.tool)}},
+                {"is_short": true, "text": {"tag": "lark_md", "content": format!("**命令**\n{}", info.cmd)}}
+            ]},
+            {"tag": "div", "fields": [
+                {"is_short": true, "text": {"tag": "lark_md", "content": format!("**Session**\n{}", sid)}},
+                {"is_short": true, "text": {"tag": "lark_md", "content": format!("**目录**\n{}", cwd)}}
+            ]},
+            {"tag": "hr"},
+            {"tag": "note", "elements": [
+                {"tag": "plain_text", "content": format!("🕐 {}  ·  request_id: {}", now, info.request_id)}
             ]},
             {"tag": "action", "actions": [
                 {"tag": "button", "text": {"tag": "plain_text", "content": "✅ 允许"}, "type": "primary",
-                 "value": serde_json::to_string(&serde_json::json!({"request_id":rid,"action":"allow"})).unwrap()},
+                 "value": serde_json::to_string(&serde_json::json!({"request_id":&info.request_id,"action":"allow"})).unwrap()},
                 {"tag": "button", "text": {"tag": "plain_text", "content": "❌ 拒绝"}, "type": "danger",
-                 "value": serde_json::to_string(&serde_json::json!({"request_id":rid,"action":"deny"})).unwrap()}
+                 "value": serde_json::to_string(&serde_json::json!({"request_id":&info.request_id,"action":"deny"})).unwrap()}
             ]}
         ]
     });
@@ -203,4 +197,59 @@ fn build_card(rid: &str, chat_id: &str, tool: &str, cmd: &str) -> String {
         "receive_id": chat_id, "msg_type": "interactive",
         "content": serde_json::to_string(&card).unwrap()
     })).unwrap()
+}
+
+// ── Card update ──
+
+async fn update_card(token: &str, message_id: &str, action: &str, info: &CardInfo) -> Result<(), String> {
+    let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let sid = info.session_id.as_deref().unwrap_or("-");
+    let cwd = info.cwd.as_deref().unwrap_or("-");
+
+    let (status_text, template, action_text) = match action {
+        "allow" => ("✅ 已允许", "green", "允许"),
+        _ => ("❌ 已拒绝", "red", "拒绝"),
+    };
+
+    // Keep original info, remove buttons, show result
+    let card = serde_json::json!({
+        "config": {"update_multi": true},
+        "header": {
+            "title": {"tag": "plain_text", "content": format!("Claude Code 请求确认 — {}", action_text)},
+            "template": template
+        },
+        "elements": [
+            {"tag": "hr"},
+            {"tag": "div", "fields": [
+                {"is_short": true, "text": {"tag": "lark_md", "content": format!("**工具**\n{}", info.tool)}},
+                {"is_short": true, "text": {"tag": "lark_md", "content": format!("**命令**\n{}", info.cmd)}}
+            ]},
+            {"tag": "div", "fields": [
+                {"is_short": true, "text": {"tag": "lark_md", "content": format!("**Session**\n{}", sid)}},
+                {"is_short": true, "text": {"tag": "lark_md", "content": format!("**目录**\n{}", cwd)}}
+            ]},
+            {"tag": "hr"},
+            {"tag": "div", "text": {"tag": "lark_md", "content": format!("**{}**  ·  🕐 {}", status_text, now)}},
+            {"tag": "note", "elements": [
+                {"tag": "plain_text", "content": format!("request_id: {}", info.request_id)}
+            ]}
+        ]
+    });
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .patch(&format!(
+            "https://open.feishu.cn/open-apis/im/v1/messages/{}",
+            message_id
+        ))
+        .header("Authorization", &format!("Bearer {}", token))
+        .header("Content-Type", "application/json; charset=utf-8")
+        .json(&serde_json::json!({"content": serde_json::to_string(&card).unwrap()}))
+        .send().await.map_err(|e| format!("update card: {}", e))?;
+
+    let j: serde_json::Value = resp.json().await.map_err(|e| format!("json: {}", e))?;
+    if j["code"].as_i64().unwrap_or(-1) != 0 {
+        return Err(format!("update card api: {}", j));
+    }
+    Ok(())
 }
