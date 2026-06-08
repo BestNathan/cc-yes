@@ -5,7 +5,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use cc_yes::ws::{
-    CardActionHandler, CardResponse, EventHandler, HandlerRegistry, WsClient, WsConfig,
+    CardEvent, CardActionHandler, CardResponse, EventHandler, HandlerRegistry, WsClient, WsConfig,
+    ActionValue,
 };
 
 #[tokio::test]
@@ -37,25 +38,15 @@ async fn test_feishu_interactive() {
         }))
         .await;
 
-    // Register card handler that looks for our request_id
+    // Register card handler with typed CardEvent parsing
     let found_clone = found.clone();
     let expected_id = request_id.clone();
     registry
-        .register(CardActionHandler::new(move |payload| {
-            let value_str = payload.get("value").and_then(|v| v.as_str());
-            if let Some(value_str) = value_str {
-                if let Ok(value) = serde_json::from_str::<serde_json::Value>(value_str) {
-                    if value.get("request_id").and_then(|r| r.as_str()) == Some(&expected_id) {
-                        let action = value
-                            .get("action")
-                            .and_then(|a| a.as_str())
-                            .unwrap_or("unknown");
-                        found_clone.store(true, Ordering::SeqCst);
-                        println!(
-                            "  >>> MATCH! action={} request_id={} <<<",
-                            action, expected_id
-                        );
-                    }
+        .register(CardActionHandler::new(move |card: CardEvent| {
+            if let Some(av) = card.action_value::<ActionValue>() {
+                if av.request_id == expected_id {
+                    found_clone.store(true, Ordering::SeqCst);
+                    println!("  >>> MATCH! action={} request_id={} <<<", av.action, expected_id);
                 }
             }
             CardResponse::empty()

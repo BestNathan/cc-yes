@@ -1,9 +1,9 @@
-/// Feishu WebSocket card interaction test using new async WsClient.
+/// Feishu WebSocket card interaction test using typed card event parsing.
 /// Run: cargo run --example card-test
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use cc_yes::ws::{EventHandler, HandlerRegistry, WsClient, WsConfig};
+use cc_yes::ws::{CardEvent, EventHandler, HandlerRegistry, WsClient, WsConfig};
 
 #[tokio::main]
 async fn main() {
@@ -19,29 +19,38 @@ async fn main() {
     // ── Set up registry ──
     let registry = Arc::new(HandlerRegistry::new(64));
 
-    // Register event handler — card.action.trigger arrives as type=event.
-    // We parse it here to match our request_id.
+    // Register event handler with typed card event parsing
     let found_clone = found.clone();
     let expected_id = request_id.clone();
     registry
         .register(EventHandler::new(move |event| {
-            let event_type = event["header"]["event_type"].as_str().unwrap_or("");
-            if event_type == "card.action.trigger" {
-                // value is double-JSON-encoded: "\"{\\\"action\\\":\\\"allow\\\",...}\""
-                let value_str = event["event"]["action"]["value"].as_str().unwrap_or("");
-                if let Ok(inner) = serde_json::from_str::<String>(value_str) {
-                    if let Ok(action) = serde_json::from_str::<serde_json::Value>(&inner) {
-                        let rid = action["request_id"].as_str().unwrap_or("");
-                        let act = action["action"].as_str().unwrap_or("?");
-                        println!("[CARD] action={} request_id={}", act, rid);
+            // Try to parse as CardEvent
+            if let Ok(card) = serde_json::from_value::<CardEvent>(event.clone()) {
+                if card.is_card_action() {
+                    let tag = card.event.action.tag.as_deref().unwrap_or("?");
+                    let name = card.event.action.name.as_deref().unwrap_or("?");
+                    let operator = &card.event.operator.open_id;
+
+                    // Decode the double-JSON-encoded action value
+                    if let Some(action) = card.action_value::<serde_json::Value>() {
+                        let action_name = action["action"].as_str().unwrap_or("?");
+                        let rid = action["request_id"].as_str().unwrap_or("?");
+                        println!(
+                            "[CARD] tag={tag} name={name} action={action_name} request_id={rid} operator={operator}"
+                        );
+
                         if rid == expected_id {
                             println!(">>> MATCH! <<<");
                             found_clone.store(true, Ordering::SeqCst);
                         }
                     }
+                } else {
+                    println!(
+                        "[EVENT] type={} id={}",
+                        card.header.event_type,
+                        card.header.event_id.as_deref().unwrap_or("?")
+                    );
                 }
-            } else {
-                println!("[EVENT] type={}", event_type);
             }
             None
         }))
@@ -71,9 +80,7 @@ async fn main() {
     let resp = http
         .post("https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal")
         .json(&serde_json::json!({"app_id": app_id, "app_secret": app_secret}))
-        .send()
-        .await
-        .unwrap();
+        .send().await.unwrap();
     let token = resp.json::<serde_json::Value>().await.unwrap()
         ["tenant_access_token"].as_str().unwrap().to_string();
     println!("[OK] Token obtained");
