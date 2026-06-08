@@ -8,7 +8,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 use crate::config::{FeishuConfig, HookInput, ApprovalResult};
-use crate::ws::{ActionValue, Event, EventHandler, HandlerRegistry, WsClient, WsConfig};
+use crate::ws::{ActionValue, CardActionBody, Event, EventHandler, HandlerRegistry, WsClient, WsConfig};
 
 /// Sync entry point — internal tokio runtime bridges to async implementation.
 pub fn request_approval(config: &FeishuConfig, input: &HookInput, command: &str) -> ApprovalResult {
@@ -50,7 +50,7 @@ async fn request_approval_async(
     let registry = Arc::new(HandlerRegistry::new(64));
     registry
         .register(EventHandler::new(move |event: Event| {
-            if let Some(card) = event.card_action() {
+            if let Ok(card) = serde_json::from_value::<CardActionBody>(event.event) {
                 if let Some(av) = card.action.parse_value::<ActionValue>() {
                     if av.request_id == rid {
                         let result = match av.action.as_str() {

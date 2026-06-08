@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use cc_yes::ws::{
-    Event, ActionValue, CardActionHandler, CardResponse, EventHandler, HandlerRegistry, WsClient, WsConfig,
+    ActionValue, CardActionBody, CardActionHandler, CardResponse, EventHandler, HandlerRegistry, WsClient, WsConfig,
 };
 
 #[tokio::test]
@@ -37,17 +37,15 @@ async fn test_feishu_interactive() {
         }))
         .await;
 
-    // Register card handler with typed Event parsing
+    // Register card handler — receives CardActionBody directly
     let found_clone = found.clone();
     let expected_id = request_id.clone();
     registry
-        .register(CardActionHandler::new(move |event: Event| {
-            if let Some(card) = event.card_action() {
-                if let Some(av) = card.action.parse_value::<ActionValue>() {
-                    if av.request_id == expected_id {
-                        found_clone.store(true, Ordering::SeqCst);
-                        println!("  >>> MATCH! action={} request_id={} <<<", av.action, expected_id);
-                    }
+        .register(CardActionHandler::new(move |card: CardActionBody| {
+            if let Some(av) = card.action.parse_value::<ActionValue>() {
+                if av.request_id == expected_id {
+                    found_clone.store(true, Ordering::SeqCst);
+                    println!("  >>> MATCH! action={} request_id={} <<<", av.action, expected_id);
                 }
             }
             CardResponse::empty()

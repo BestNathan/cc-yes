@@ -3,7 +3,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use cc_yes::ws::{ActionValue, Event, EventHandler, HandlerRegistry, WsClient, WsConfig};
+use cc_yes::ws::{ActionValue, CardActionBody, Event, EventHandler, HandlerRegistry, WsClient, WsConfig};
 
 #[tokio::main]
 async fn main() {
@@ -23,8 +23,8 @@ async fn main() {
     let expected_id = request_id.clone();
     registry
         .register(EventHandler::new(move |event: Event| {
-            // Card action via typed accessor
-            if let Some(card) = event.card_action() {
+            // Decode card body from raw event
+            if let Ok(card) = serde_json::from_value::<CardActionBody>(event.event) {
                 let tag = card.action.tag.as_deref().unwrap_or("?");
                 let operator = &card.operator.open_id;
                 let host = &card.host;
