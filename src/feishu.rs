@@ -75,13 +75,28 @@ async fn request_approval_async(
     // Give WS a moment to connect before sending the card
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    // 3. Send interactive card
+    // 3. Detect project info
+    let cwd = input.cwd.as_deref().unwrap_or("");
+    let project = std::path::Path::new(cwd)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let branch = std::process::Command::new("git")
+        .args(["branch", "--show-current"])
+        .current_dir(cwd)
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+
     let card_info = CardInfo {
         request_id: request_id.clone(),
+        project,
+        branch,
         tool: input.tool_name.clone(),
         cmd: command.to_string(),
         session_id: input.session_id.clone(),
-        cwd: input.cwd.clone(),
     };
     let body = build_card(&card_info, &config.chat_id);
     if send_msg(&token, &body).await.is_err() {
@@ -152,10 +167,11 @@ async fn send_msg(token: &str, body: &str) -> Result<(), String> {
 
 struct CardInfo {
     request_id: String,
+    project: String,
+    branch: String,
     tool: String,
     cmd: String,
     session_id: Option<String>,
-    cwd: Option<String>,
 }
 
 // ── Card builder ──
@@ -163,12 +179,17 @@ struct CardInfo {
 fn build_card(info: &CardInfo, chat_id: &str) -> String {
     let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
     let sid = info.session_id.as_deref().unwrap_or("-");
-    let cwd = info.cwd.as_deref().unwrap_or("-");
+    let branch_display = if info.branch.is_empty() { "-".to_string() } else { info.branch.clone() };
+    let title = if info.branch.is_empty() {
+        info.project.clone()
+    } else {
+        format!("{} ({})", info.project, info.branch)
+    };
 
     let card = serde_json::json!({
         "config": {"update_multi": true},
         "header": {
-            "title": {"tag": "plain_text", "content": "Claude Code 请求确认"},
+            "title": {"tag": "plain_text", "content": title},
             "template": "blue"
         },
         "elements": [
@@ -179,7 +200,7 @@ fn build_card(info: &CardInfo, chat_id: &str) -> String {
             ]},
             {"tag": "div", "fields": [
                 {"is_short": true, "text": {"tag": "lark_md", "content": format!("**Session**\n{}", sid)}},
-                {"is_short": true, "text": {"tag": "lark_md", "content": format!("**目录**\n{}", cwd)}}
+                {"is_short": true, "text": {"tag": "lark_md", "content": format!("**分支**\n{}", branch_display)}}
             ]},
             {"tag": "hr"},
             {"tag": "note", "elements": [
@@ -204,18 +225,23 @@ fn build_card(info: &CardInfo, chat_id: &str) -> String {
 async fn update_card(token: &str, message_id: &str, action: &str, info: &CardInfo) -> Result<(), String> {
     let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
     let sid = info.session_id.as_deref().unwrap_or("-");
-    let cwd = info.cwd.as_deref().unwrap_or("-");
+    let branch_display = if info.branch.is_empty() { "-".to_string() } else { info.branch.clone() };
+    let title = if info.branch.is_empty() {
+        info.project.clone()
+    } else {
+        format!("{} ({})", info.project, info.branch)
+    };
 
-    let (status_text, template, action_text) = match action {
-        "allow" => ("✅ 已允许", "green", "允许"),
-        _ => ("❌ 已拒绝", "red", "拒绝"),
+    let (status_text, template) = match action {
+        "allow" => ("✅ 已允许", "green"),
+        _ => ("❌ 已拒绝", "red"),
     };
 
     // Keep original info, remove buttons, show result
     let card = serde_json::json!({
         "config": {"update_multi": true},
         "header": {
-            "title": {"tag": "plain_text", "content": format!("Claude Code 请求确认 — {}", action_text)},
+            "title": {"tag": "plain_text", "content": format!("{} — {}", title, status_text)},
             "template": template
         },
         "elements": [
@@ -226,10 +252,10 @@ async fn update_card(token: &str, message_id: &str, action: &str, info: &CardInf
             ]},
             {"tag": "div", "fields": [
                 {"is_short": true, "text": {"tag": "lark_md", "content": format!("**Session**\n{}", sid)}},
-                {"is_short": true, "text": {"tag": "lark_md", "content": format!("**目录**\n{}", cwd)}}
+                {"is_short": true, "text": {"tag": "lark_md", "content": format!("**分支**\n{}", branch_display)}}
             ]},
             {"tag": "hr"},
-            {"tag": "div", "text": {"tag": "lark_md", "content": format!("**{}**  ·  🕐 {}", status_text, now)}},
+            {"tag": "div", "text": {"tag": "lark_md", "content": format!("{}  ·  🕐 {}", status_text, now)}},
             {"tag": "note", "elements": [
                 {"tag": "plain_text", "content": format!("request_id: {}", info.request_id)}
             ]}
