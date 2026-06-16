@@ -3,26 +3,11 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash",
+        "matcher": "",
         "hooks": [{
           "type": "command",
-          "command": "${CLAUDE_PLUGIN_ROOT}/scripts/hook-entry.sh pretooluse"
-        }]
-      },
-      {
-        "matcher": "Write|Edit|WebFetch|WebSearch|NotebookEdit",
-        "hooks": [{
-          "type": "command",
-          "command": "${CLAUDE_PLUGIN_ROOT}/scripts/hook-entry.sh pretooluse"
-        }]
-      }
-    ],
-    "PermissionRequest": [
-      {
-        "matcher": "*",
-        "hooks": [{
-          "type": "command",
-          "command": "${CLAUDE_PLUGIN_ROOT}/scripts/hook-entry.sh permission-request"
+          "command": "${CLAUDE_PLUGIN_ROOT}/scripts/hook-entry.sh pretooluse",
+          "timeout": 86400
         }]
       }
     ],

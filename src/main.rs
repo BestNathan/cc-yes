@@ -194,15 +194,13 @@ fn main() -> Result<(), String> {
                         let home = std::env::var("HOME")
                             .map_err(|_| "$HOME not set".to_string())?;
                         let global_path = PathBuf::from(&home).join(".claude").join("settings.json");
-                        let mut yes = config::YesConfig::default();
-                        yes.autoyes = Some(true);
+                        let yes = config::YesConfig { autoyes: Some(true), ..Default::default() };
                         settings::write_to_local(&global_path, &yes)?;
                         println!("Enabled autoyes globally ({})", global_path.display());
                     }
                     "project" => {
                         let (_, local_path) = settings::load_merged(&cwd)?;
-                        let mut yes = config::YesConfig::default();
-                        yes.autoyes = Some(true);
+                        let yes = config::YesConfig { autoyes: Some(true), ..Default::default() };
                         settings::write_to_local(&local_path, &yes)?;
                         println!("Enabled autoyes for project ({})", local_path.display());
                     }
@@ -215,15 +213,13 @@ fn main() -> Result<(), String> {
                         let home = std::env::var("HOME")
                             .map_err(|_| "$HOME not set".to_string())?;
                         let global_path = PathBuf::from(&home).join(".claude").join("settings.json");
-                        let mut yes = config::YesConfig::default();
-                        yes.autoyes = Some(false);
+                        let yes = config::YesConfig { autoyes: Some(false), ..Default::default() };
                         settings::write_to_local(&global_path, &yes)?;
                         println!("Disabled autoyes globally ({})", global_path.display());
                     }
                     "project" => {
                         let (_, local_path) = settings::load_merged(&cwd)?;
-                        let mut yes = config::YesConfig::default();
-                        yes.autoyes = Some(false);
+                        let yes = config::YesConfig { autoyes: Some(false), ..Default::default() };
                         settings::write_to_local(&local_path, &yes)?;
                         println!("Disabled autoyes for project ({})", local_path.display());
                     }
@@ -267,7 +263,7 @@ fn main() -> Result<(), String> {
                 println!("Global  (~/.claude/settings.json):      {}", global_val);
                 println!("Project (.claude/settings.json):       {}", project_val);
                 println!("Local   (.claude/settings.local.json): {}", local_val);
-                println!("Result: {}", effective);
+                println!("→ Result: {}", effective);
             }
         },
 

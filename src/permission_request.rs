@@ -2,7 +2,7 @@
 //! permission prompt.  Sends a card to Feishu and waits for approval.
 
 use std::io::{self, Read};
-use crate::config::{HookInput, HookSpecificOutput, ApprovalResult};
+use crate::config::{HookInput, PermissionRequestOutput, PermissionDecision, ApprovalResult};
 use crate::feishu;
 use crate::log;
 use crate::settings;
@@ -43,10 +43,11 @@ pub fn run_permission_request() -> Result<(), String> {
     match feishu::request_approval(feishu_config, &input, &command_str) {
         ApprovalResult::Allow => {
             log::log_decision(&input.tool_name, &command_str, "allow", "approved via feishu");
-            let output = HookSpecificOutput {
+            let output = PermissionRequestOutput {
                 hook_event_name: "PermissionRequest".to_string(),
-                permission_decision: "allow".to_string(),
-                permission_decision_reason: "Approved via feishu".to_string(),
+                decision: PermissionDecision {
+                    behavior: "allow".to_string(),
+                },
             };
             let wrapper = serde_json::json!({"hookSpecificOutput": output});
             println!("{}", serde_json::to_string(&wrapper).unwrap());

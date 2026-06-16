@@ -12,3 +12,4 @@ pub use business::handlers::card::{
     CardActionBody, Operator, CardAction, CardContext, ActionValue,
     CardActionHandler, CardResponse, Toast,
 };
+pub use proto::headers::MessageType;
