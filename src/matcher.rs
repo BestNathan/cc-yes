@@ -187,7 +187,7 @@ mod tests {
             url: vec![],
             imports: vec![],
             env: vec!["RUST_LOG".to_string()],
-            feishu: None,
+            ..Default::default()
         };
 
         let extracted = ExtractedItems {
@@ -205,11 +205,7 @@ mod tests {
     fn test_mismatch_causes_delegate() {
         let config = YesConfig {
             cmd: vec!["git".to_string()],
-            files: vec![],
-            url: vec![],
-            imports: vec![],
-            env: vec![],
-            feishu: None,
+            ..Default::default()
         };
 
         let extracted = ExtractedItems {
@@ -227,11 +223,7 @@ mod tests {
     fn test_empty_extraction_delegates() {
         let config = YesConfig {
             cmd: vec!["git".to_string()],
-            files: vec![],
-            url: vec![],
-            imports: vec![],
-            env: vec![],
-            feishu: None,
+            ..Default::default()
         };
 
         let extracted = ExtractedItems::default();

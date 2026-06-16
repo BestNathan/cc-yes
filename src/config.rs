@@ -14,17 +14,20 @@ pub struct YesConfig {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub env: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub autoyes: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub feishu: Option<FeishuConfig>,
 }
 
 impl YesConfig {
-    /// Returns true if all five dimensions are empty (no rules configured).
+    /// Returns true if all five dimensions are empty AND autoyes is not enabled.
     pub fn is_empty(&self) -> bool {
         self.cmd.is_empty()
             && self.files.is_empty()
             && self.url.is_empty()
             && self.imports.is_empty()
             && self.env.is_empty()
+            && self.autoyes != Some(true)
     }
 }
 
@@ -68,6 +71,21 @@ pub struct HookSpecificOutput {
     pub permission_decision: String,
     #[serde(rename = "permissionDecisionReason")]
     pub permission_decision_reason: String,
+}
+
+/// Output for PermissionRequest hook — uses nested decision.behavior format
+/// required by Claude Code's PermissionRequest hook protocol.
+/// Wrapped in {"hookSpecificOutput": ...} before writing to stdout.
+#[derive(Debug, Serialize)]
+pub struct PermissionRequestOutput {
+    #[serde(rename = "hookEventName")]
+    pub hook_event_name: String,
+    pub decision: PermissionDecision,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PermissionDecision {
+    pub behavior: String,
 }
 
 /// Top-level wrapper for settings.json containing the optional `yes` block.
