@@ -47,6 +47,9 @@ enum Commands {
     /// Hook handlers (called by Claude Code, read stdin)
     #[command(subcommand)]
     Hook(HookCommand),
+    /// Manage autoyes settings
+    #[command(subcommand)]
+    Autoyes(AutoyesCommand),
 }
 
 #[derive(Subcommand)]
@@ -60,6 +63,24 @@ enum HookCommand {
     /// PostToolUse: auto-learn from "Always allow" clicks
     #[command(name = "posttooluse")]
     PostToolUse,
+}
+
+#[derive(Subcommand)]
+enum AutoyesCommand {
+    /// Enable autoyes (auto-approve all permission requests)
+    Enable {
+        /// Scope: project (default) or global
+        #[arg(long, default_value = "project")]
+        scope: String,
+    },
+    /// Disable autoyes
+    Disable {
+        /// Scope: project (default) or global
+        #[arg(long, default_value = "project")]
+        scope: String,
+    },
+    /// Show autoyes status across all config layers
+    Status,
 }
 
 fn main() -> Result<(), String> {
@@ -164,6 +185,90 @@ fn main() -> Result<(), String> {
             HookCommand::PreToolUse => hook::run_hook()?,
             HookCommand::PermissionRequest => permission_request::run_permission_request()?,
             HookCommand::PostToolUse => after::run_after()?,
+        },
+
+        Commands::Autoyes(cmd) => match cmd {
+            AutoyesCommand::Enable { scope } => {
+                match scope.as_str() {
+                    "global" => {
+                        let home = std::env::var("HOME")
+                            .map_err(|_| "$HOME not set".to_string())?;
+                        let global_path = PathBuf::from(&home).join(".claude").join("settings.json");
+                        let mut yes = config::YesConfig::default();
+                        yes.autoyes = Some(true);
+                        settings::write_to_local(&global_path, &yes)?;
+                        println!("Enabled autoyes globally ({})", global_path.display());
+                    }
+                    "project" => {
+                        let (_, local_path) = settings::load_merged(&cwd)?;
+                        let mut yes = config::YesConfig::default();
+                        yes.autoyes = Some(true);
+                        settings::write_to_local(&local_path, &yes)?;
+                        println!("Enabled autoyes for project ({})", local_path.display());
+                    }
+                    _ => return Err(format!("Unknown scope: {}. Use: project, global", scope)),
+                }
+            }
+            AutoyesCommand::Disable { scope } => {
+                match scope.as_str() {
+                    "global" => {
+                        let home = std::env::var("HOME")
+                            .map_err(|_| "$HOME not set".to_string())?;
+                        let global_path = PathBuf::from(&home).join(".claude").join("settings.json");
+                        let mut yes = config::YesConfig::default();
+                        yes.autoyes = Some(false);
+                        settings::write_to_local(&global_path, &yes)?;
+                        println!("Disabled autoyes globally ({})", global_path.display());
+                    }
+                    "project" => {
+                        let (_, local_path) = settings::load_merged(&cwd)?;
+                        let mut yes = config::YesConfig::default();
+                        yes.autoyes = Some(false);
+                        settings::write_to_local(&local_path, &yes)?;
+                        println!("Disabled autoyes for project ({})", local_path.display());
+                    }
+                    _ => return Err(format!("Unknown scope: {}. Use: project, global", scope)),
+                }
+            }
+            AutoyesCommand::Status => {
+                let home = std::env::var("HOME").unwrap_or_default();
+                let global_path = PathBuf::from(&home).join(".claude").join("settings.json");
+                let project_path = cwd.join(".claude").join("settings.json");
+                let local_path = cwd.join(".claude").join("settings.local.json");
+
+                fn read_autoyes_label(path: &std::path::Path) -> String {
+                    match std::fs::read_to_string(path) {
+                        Ok(content) => match serde_json::from_str::<config::SettingsFile>(&content) {
+                            Ok(s) => match s.yes.and_then(|y| y.autoyes) {
+                                Some(true) => "enabled".to_string(),
+                                Some(false) => "disabled".to_string(),
+                                None => "(not set)".to_string(),
+                            },
+                            Err(_) => "(parse error)".to_string(),
+                        },
+                        Err(_) => "(not found)".to_string(),
+                    }
+                }
+
+                let global_val = read_autoyes_label(&global_path);
+                let project_val = read_autoyes_label(&project_path);
+                let local_val = read_autoyes_label(&local_path);
+
+                let effective = if local_val != "(not found)" && local_val != "(not set)" {
+                    local_val.clone()
+                } else if project_val != "(not found)" && project_val != "(not set)" {
+                    project_val.clone()
+                } else if global_val != "(not found)" && global_val != "(not set)" {
+                    global_val.clone()
+                } else {
+                    "(not set)".to_string()
+                };
+
+                println!("Global  (~/.claude/settings.json):      {}", global_val);
+                println!("Project (.claude/settings.json):       {}", project_val);
+                println!("Local   (.claude/settings.local.json): {}", local_val);
+                println!("Result: {}", effective);
+            }
         },
 
         Commands::Daemon => {
