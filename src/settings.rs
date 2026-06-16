@@ -54,6 +54,10 @@ fn merge_into(base: &mut YesConfig, other: &YesConfig) {
     if other.feishu.is_some() {
         base.feishu = other.feishu.clone();
     }
+    // autoyes: higher-priority layer overrides
+    if other.autoyes.is_some() {
+        base.autoyes = other.autoyes;
+    }
 
     dedup(&mut base.cmd);
     dedup(&mut base.files);
