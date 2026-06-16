@@ -286,3 +286,81 @@ async fn update_card(token: &str, message_id: &str, action: &str, info: &CardInf
     }
     Ok(())
 }
+
+// ── Auto-yes notification ──
+
+/// Send a read-only "auto-allowed" notification card to Feishu.
+/// Same card format as the approval card, but green header, no buttons.
+pub fn send_autoyes_notification(config: &FeishuConfig, input: &HookInput, command: &str) {
+    if !config.is_configured() {
+        return;
+    }
+    let rt = match tokio::runtime::Runtime::new() {
+        Ok(rt) => rt,
+        Err(_) => return,
+    };
+    rt.block_on(send_autoyes_notification_async(config, input, command));
+}
+
+async fn send_autoyes_notification_async(
+    config: &FeishuConfig,
+    input: &HookInput,
+    command: &str,
+) {
+    let token = match get_token(&config.app_id, &config.app_secret).await {
+        Ok(t) => t,
+        Err(_) => return,
+    };
+
+    let cwd = input.cwd.as_deref().unwrap_or("");
+    let project = std::path::Path::new(cwd)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let branch = std::process::Command::new("git")
+        .args(["branch", "--show-current"])
+        .current_dir(cwd)
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+
+    let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let sid = input.session_id.as_deref().unwrap_or("-");
+    let branch_display = if branch.is_empty() { "-".to_string() } else { branch.clone() };
+    let title = if branch.is_empty() {
+        format!("{} — ✅ 自动允许", project)
+    } else {
+        format!("{} ({}) — ✅ 自动允许", project, branch)
+    };
+
+    let card = serde_json::json!({
+        "config": {"update_multi": true},
+        "header": {
+            "title": {"tag": "plain_text", "content": title},
+            "template": "green"
+        },
+        "elements": [
+            {"tag": "hr"},
+            {"tag": "div", "fields": [
+                {"is_short": true, "text": {"tag": "lark_md", "content": format!("**工具**\n{}", input.tool_name)}},
+                {"is_short": true, "text": {"tag": "lark_md", "content": format!("**命令**\n{}", command)}}
+            ]},
+            {"tag": "div", "fields": [
+                {"is_short": true, "text": {"tag": "lark_md", "content": format!("**Session**\n{}", sid)}},
+                {"is_short": true, "text": {"tag": "lark_md", "content": format!("**分支**\n{}", branch_display)}}
+            ]},
+            {"tag": "hr"},
+            {"tag": "note", "elements": [
+                {"tag": "plain_text", "content": format!("🕐 {}  ·  自动允许", now)}
+            ]}
+        ]
+    });
+    let body = serde_json::to_string(&serde_json::json!({
+        "receive_id": config.chat_id, "msg_type": "interactive",
+        "content": serde_json::to_string(&card).unwrap()
+    })).unwrap();
+
+    let _ = send_msg(&token, &body).await;
+}
