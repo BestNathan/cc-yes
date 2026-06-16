@@ -185,4 +185,55 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
+
+    #[test]
+    fn test_autoyes_global_override() {
+        let tmp = std::env::temp_dir().join("cc-yes-test-autoyes-override");
+        let _ = std::fs::remove_dir_all(&tmp);
+
+        // Layer 1: global has autoyes=true
+        write_temp_file(&tmp, "home/.claude/settings.json", r#"{"yes":{"autoyes":true}}"#);
+        // Layer 2: project has autoyes=false
+        write_temp_file(&tmp, "project/.claude/settings.json", r#"{"yes":{"autoyes":false}}"#);
+
+        std::env::set_var("HOME", tmp.join("home").to_str().unwrap());
+
+        let (merged, _) = load_merged(&tmp.join("project")).unwrap();
+        assert_eq!(merged.autoyes, Some(false), "project-level false should override global true");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_autoyes_local_override() {
+        let tmp = std::env::temp_dir().join("cc-yes-test-autoyes-local");
+        let _ = std::fs::remove_dir_all(&tmp);
+
+        // Layer 1: global has autoyes=true
+        write_temp_file(&tmp, "home/.claude/settings.json", r#"{"yes":{"autoyes":true}}"#);
+        // Layer 2: project has autoyes=false
+        write_temp_file(&tmp, "project/.claude/settings.json", r#"{"yes":{"autoyes":false}}"#);
+        // Layer 3: local has autoyes=true
+        write_temp_file(&tmp, "project/.claude/settings.local.json", r#"{"yes":{"autoyes":true}}"#);
+
+        std::env::set_var("HOME", tmp.join("home").to_str().unwrap());
+
+        let (merged, _) = load_merged(&tmp.join("project")).unwrap();
+        assert_eq!(merged.autoyes, Some(true), "local-level true should override project false");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_autoyes_not_set_returns_none() {
+        let tmp = std::env::temp_dir().join("cc-yes-test-autoyes-none");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join(".claude")).unwrap();
+        std::env::set_var("HOME", tmp.to_str().unwrap());
+
+        let (merged, _) = load_merged(&tmp).unwrap();
+        assert_eq!(merged.autoyes, None, "autoyes should be None when not configured");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }
