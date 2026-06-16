@@ -37,6 +37,7 @@ fn test_hook_approve_simple_git() {
     // Run cc-yes hook with stdin
     let mut child = Command::new(binary_path())
         .arg("hook")
+        .arg("pretooluse")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .current_dir(&tmp)
@@ -84,6 +85,7 @@ fn test_hook_delegate_unknown_command() {
 
     let mut child = Command::new(binary_path())
         .arg("hook")
+        .arg("pretooluse")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .current_dir(&tmp)
@@ -161,6 +163,7 @@ fn test_hook_feishu_not_configured_still_delegates() {
 
     let mut child = Command::new(binary_path())
         .arg("hook")
+        .arg("pretooluse")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .current_dir(&tmp)
@@ -179,6 +182,101 @@ fn test_hook_feishu_not_configured_still_delegates() {
     assert!(
         stdout.trim().is_empty(),
         "Empty feishu config should not send feishu request, just delegate silently. Got: {}",
+        stdout.trim()
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_hook_autoyes_approves_unknown_command() {
+    let tmp = std::env::temp_dir().join("cc-yes-integration-autoyes");
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(tmp.join(".claude")).unwrap();
+
+    // autoyes=true, no cmd rules
+    let settings = r#"{"yes":{"autoyes":true}}"#;
+    std::fs::write(tmp.join(".claude").join("settings.local.json"), settings).unwrap();
+    std::env::set_var("HOME", tmp.to_str().unwrap());
+
+    let hook_input = serde_json::json!({
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": "rm -rf /",
+            "description": "Dangerous command"
+        },
+        "session_id": "test-autoyes-1",
+        "cwd": tmp.to_str().unwrap()
+    });
+
+    let mut child = Command::new(binary_path())
+        .arg("hook")
+        .arg("pretooluse")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .current_dir(&tmp)
+        .spawn()
+        .unwrap();
+
+    {
+        let stdin = child.stdin.as_mut().unwrap();
+        stdin.write_all(hook_input.to_string().as_bytes()).unwrap();
+    }
+
+    let output = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let result: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+
+    assert_eq!(
+        result["hookSpecificOutput"]["permissionDecision"], "allow",
+        "autoyes should approve any command"
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_hook_autoyes_false_delegates() {
+    let tmp = std::env::temp_dir().join("cc-yes-integration-autoyes-false");
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(tmp.join(".claude")).unwrap();
+
+    // autoyes=false, no cmd rules
+    let settings = r#"{"yes":{"autoyes":false}}"#;
+    std::fs::write(tmp.join(".claude").join("settings.local.json"), settings).unwrap();
+    std::env::set_var("HOME", tmp.to_str().unwrap());
+
+    let hook_input = serde_json::json!({
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": "rm -rf /",
+            "description": "Dangerous command"
+        },
+        "session_id": "test-autoyes-false-1",
+        "cwd": tmp.to_str().unwrap()
+    });
+
+    let mut child = Command::new(binary_path())
+        .arg("hook")
+        .arg("pretooluse")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .current_dir(&tmp)
+        .spawn()
+        .unwrap();
+
+    {
+        let stdin = child.stdin.as_mut().unwrap();
+        stdin.write_all(hook_input.to_string().as_bytes()).unwrap();
+    }
+
+    let output = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // autoyes=false with no matching rules → delegate (silent exit)
+    assert!(
+        stdout.trim().is_empty(),
+        "autoyes=false should fall through to normal delegate flow. Got: {}",
         stdout.trim()
     );
 
