@@ -9,9 +9,12 @@ use cc_yes::ws::{ActionValue, CardActionBody, Event, EventHandler, HandlerRegist
 async fn main() {
     tracing_subscriber::fmt::init();
 
-    let app_id = "cli_aaafed6c0b789be2";
-    let app_secret = "8zs3WVavTDWfM1scnvb5VgiGMYNChv4I";
-    let chat_id = "oc_56e159a98849d5491f939086e2b08899";
+    let app_id = std::env::var("FEISHU_APP_ID")
+        .expect("FEISHU_APP_ID not set");
+    let app_secret = std::env::var("FEISHU_APP_SECRET")
+        .expect("FEISHU_APP_SECRET not set");
+    let chat_id = std::env::var("FEISHU_CHAT_ID")
+        .expect("FEISHU_CHAT_ID not set");
 
     let request_id = format!("cardtest-{}", std::time::UNIX_EPOCH.elapsed().unwrap().as_secs());
     let found = Arc::new(AtomicBool::new(false));
