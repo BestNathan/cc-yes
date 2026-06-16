@@ -196,11 +196,13 @@ mod tests {
         // Layer 2: project has autoyes=false
         write_temp_file(&tmp, "project/.claude/settings.json", r#"{"yes":{"autoyes":false}}"#);
 
+        let orig_home = std::env::var("HOME").ok();
         std::env::set_var("HOME", tmp.join("home").to_str().unwrap());
 
         let (merged, _) = load_merged(&tmp.join("project")).unwrap();
         assert_eq!(merged.autoyes, Some(false), "project-level false should override global true");
 
+        if let Some(v) = orig_home { std::env::set_var("HOME", v); }
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
@@ -216,11 +218,13 @@ mod tests {
         // Layer 3: local has autoyes=true
         write_temp_file(&tmp, "project/.claude/settings.local.json", r#"{"yes":{"autoyes":true}}"#);
 
+        let orig_home = std::env::var("HOME").ok();
         std::env::set_var("HOME", tmp.join("home").to_str().unwrap());
 
         let (merged, _) = load_merged(&tmp.join("project")).unwrap();
         assert_eq!(merged.autoyes, Some(true), "local-level true should override project false");
 
+        if let Some(v) = orig_home { std::env::set_var("HOME", v); }
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
@@ -229,11 +233,16 @@ mod tests {
         let tmp = std::env::temp_dir().join("cc-yes-test-autoyes-none");
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(tmp.join(".claude")).unwrap();
+
+        // Point HOME to the temp dir (no settings.json exists there) and save original.
+        // Also set cwd to tmp so project/local paths also don't exist.
+        let orig_home = std::env::var("HOME").ok();
         std::env::set_var("HOME", tmp.to_str().unwrap());
 
         let (merged, _) = load_merged(&tmp).unwrap();
         assert_eq!(merged.autoyes, None, "autoyes should be None when not configured");
 
+        if let Some(v) = orig_home { std::env::set_var("HOME", v); }
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }
