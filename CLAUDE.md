@@ -66,6 +66,34 @@ Binary receives `HookInput` JSON on stdin (`tool_name`, `tool_input`, `session_i
 
 `cc-yes add` writes to `.claude/settings.local.json`. `cc-yes list` shows merged result across all 3 layers.
 
+### Autoyes
+
+Set `yes.autoyes = true` to auto-approve ALL permission requests without rule matching.
+When feishu is also configured, each auto-approved request sends a notification card.
+
+```json
+{
+  "yes": {
+    "autoyes": true,
+    "feishu": {
+      "app_id": "...",
+      "app_secret": "...",
+      "chat_id": "..."
+    }
+  }
+}
+```
+
+CLI:
+```bash
+cc-yes autoyes enable              # Enable for current project
+cc-yes autoyes enable --scope global  # Enable for all projects
+cc-yes autoyes disable             # Disable for current project
+cc-yes autoyes status              # Show status across all layers
+```
+
+Layer priority: local > project > global. A project-level `autoyes: false` can override a global `autoyes: true`.
+
 ### Environment variables
 
 | Variable | Default | Purpose |
